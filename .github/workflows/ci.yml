@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmp
+          POSTGRES_PASSWORD: cmp_dev_password
+          POSTGRES_DB: cmp_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cmp" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://cmp:cmp_dev_password@127.0.0.1:5432/cmp_test?schema=public
+      TEST_DATABASE_URL: postgresql://cmp:cmp_dev_password@127.0.0.1:5432/cmp_test?schema=public
+      TEST_R2_ENDPOINT: http://127.0.0.1:9000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - name: System tools (ffmpeg, poppler) and S3-compatible test server
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg poppler-utils
+          python3 -m pip install --user "moto[server,s3]"
+          nohup ~/.local/bin/moto_server -H 127.0.0.1 -p 9000 > moto.log 2>&1 &
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=moderate
+      - run: npm run lint
+      - run: npm run typecheck
+      - name: Unit and integration tests
+        run: npx vitest run
+      - name: Production build
+        run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmp
+          POSTGRES_PASSWORD: cmp_dev_password
+          POSTGRES_DB: cmp
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cmp" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://cmp:cmp_dev_password@127.0.0.1:5432/cmp?schema=public
+      APP_URL: http://localhost:3000
+      R2_ENDPOINT: http://127.0.0.1:9000
+      R2_ACCOUNT_ID: ci
+      R2_ACCESS_KEY_ID: test
+      R2_SECRET_ACCESS_KEY: test
+      R2_BUCKET: cmp-ci
+      SEED_ADMIN_EMAIL: admin@cmp.local
+      SEED_ADMIN_PASSWORD: ChangeMe!2026
+      SEED_DEMO_USERS: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg poppler-utils
+          python3 -m pip install --user "moto[server,s3]"
+          nohup ~/.local/bin/moto_server -H 127.0.0.1 -p 9000 > moto.log 2>&1 &
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run db:migrate && npm run db:seed
+      - run: npm run storage:setup -- --create
+      - run: npm run build
+      - name: Start web server and worker
+        run: |
+          nohup npm run start > web.log 2>&1 &
+          nohup npm run worker > worker.log 2>&1 &
+          npx --yes wait-on http://localhost:3000/api/health
+      - run: npm run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            test-results
+            web.log
+            worker.log

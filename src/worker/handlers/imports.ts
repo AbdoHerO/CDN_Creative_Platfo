@@ -438,7 +438,7 @@ export async function runImport(payload: { batchId: string }) {
             });
           }
         }
-        if (createdHere && attached === 0) await prisma.creative.delete({ where: { id: creativeId } }).catch(() => undefined);
+        if (createdHere && attached === 0) await prisma.creative.deleteMany({ where: { id: creativeId } });
       }
 
       const skipped = await prisma.importItem.count({ where: { batchId: batch.id, OR: [{ include: false }, { status: "REJECTED" }] } });

@@ -552,7 +552,7 @@ export async function cleanupEmptyCreative(creativeId: string | null) {
     prisma.uploadSession.count({ where: { creativeId, status: "UPLOADING" } }),
   ]);
   if (files === 0 && active === 0) {
-    await prisma.creative.delete({ where: { id: creativeId } }).catch(() => undefined);
+    await prisma.creative.deleteMany({ where: { id: creativeId } });
   }
 }
 

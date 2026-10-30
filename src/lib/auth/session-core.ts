@@ -70,7 +70,7 @@ export async function validateSessionToken(token: string): Promise<{ user: Sessi
   if (!session) return null;
   const now = Date.now();
   if (session.expiresAt.getTime() <= now || session.user.status !== "ACTIVE") {
-    await prisma.session.delete({ where: { id } }).catch(() => undefined);
+    await prisma.session.deleteMany({ where: { id } });
     return null;
   }
 
@@ -86,9 +86,7 @@ export async function validateSessionToken(token: string): Promise<{ user: Sessi
       expiresAt = new Date(now + ttl);
       renewed = true;
     }
-    await prisma.session
-      .update({ where: { id }, data: { lastSeenAt: new Date(now), expiresAt } })
-      .catch(() => undefined);
+    await prisma.session.updateMany({ where: { id }, data: { lastSeenAt: new Date(now), expiresAt } });
   }
 
   const u = session.user;
@@ -113,7 +111,7 @@ export async function validateSessionToken(token: string): Promise<{ user: Sessi
 }
 
 export async function invalidateSession(sessionId: string) {
-  await prisma.session.delete({ where: { id: sessionId } }).catch(() => undefined);
+  await prisma.session.deleteMany({ where: { id: sessionId } });
 }
 
 export async function invalidateUserSessions(userId: string, exceptSessionId?: string) {

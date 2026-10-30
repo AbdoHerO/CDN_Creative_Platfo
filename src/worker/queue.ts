@@ -26,8 +26,13 @@ export async function claimJob(workerId: string): Promise<ClaimedJob | null> {
   return rows[0] ?? null;
 }
 
+/** Runs on a timer: a failed heartbeat is logged, never allowed to crash the worker. */
 export async function heartbeat(jobId: string) {
-  await prisma.job.update({ where: { id: jobId }, data: { lockedAt: new Date() } }).catch(() => undefined);
+  try {
+    await prisma.job.updateMany({ where: { id: jobId }, data: { lockedAt: new Date() } });
+  } catch (err) {
+    console.warn(JSON.stringify({ t: new Date().toISOString(), level: "warn", msg: "heartbeat failed", jobId, error: String(err) }));
+  }
 }
 
 export async function completeJob(jobId: string) {

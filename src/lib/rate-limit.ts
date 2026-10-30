@@ -29,7 +29,7 @@ export async function isRateLimited(key: string, limit: number, windowSeconds: n
 }
 
 export async function resetRateLimit(key: string) {
-  await prisma.rateLimit.delete({ where: { key } }).catch(() => undefined);
+  await prisma.rateLimit.deleteMany({ where: { key } });
 }
 
 export class RateLimitError extends Error {
