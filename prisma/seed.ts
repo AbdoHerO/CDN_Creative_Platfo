@@ -40,23 +40,26 @@ async function main() {
     });
   }
 
-  const adminEmail = (process.env.SEED_ADMIN_EMAIL ?? "admin@example.com").toLowerCase();
+  const adminEmail = (process.env.SEED_ADMIN_EMAIL || "admin@example.com").toLowerCase();
   const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } });
   if (!existingAdmin) {
-    const provided = process.env.SEED_ADMIN_PASSWORD;
-    const password = provided && provided.length >= 10 ? provided : generateTemporaryPassword();
+    const provided = process.env.SEED_ADMIN_PASSWORD ?? "";
+    // A password shorter than 10 characters is replaced by a temporary one (printed below).
+    const useProvided = provided.length >= 10;
+    if (provided && !useProvided) console.warn("! SEED_ADMIN_PASSWORD is shorter than 10 characters; generating a temporary password instead.");
+    const password = useProvided ? provided : generateTemporaryPassword();
     await prisma.user.create({
       data: {
         email: adminEmail,
-        name: process.env.SEED_ADMIN_NAME ?? "Platform Admin",
+        name: process.env.SEED_ADMIN_NAME || "Platform Admin",
         jobTitle: "Administrator",
         passwordHash: await hashPassword(password),
         roleId: roles.ADMIN,
-        mustChangePassword: !provided,
+        mustChangePassword: !useProvided,
       },
     });
     console.log(`✔ Admin account created: ${adminEmail}`);
-    if (!provided) console.log(`  Temporary password (change on first login): ${password}`);
+    if (!useProvided) console.log(`  Temporary password (change on first login): ${password}`);
   } else {
     console.log(`• Admin account already exists: ${adminEmail}`);
   }
@@ -72,7 +75,8 @@ async function main() {
 }
 
 async function seedDemo(roles: Record<RoleKey, string>) {
-  const password = process.env.SEED_DEMO_PASSWORD ?? "Demo-Password-2026";
+  // `||`, not `??`: `.env.example` ships SEED_DEMO_PASSWORD="" (empty means "use the default").
+  const password = process.env.SEED_DEMO_PASSWORD || "Demo-Password-2026";
   const passwordHash = await hashPassword(password);
   const users: { email: string; name: string; role: RoleKey; jobTitle: string }[] = [
     { email: "manager@cmp.local", name: "Maya Manager", role: "MANAGER", jobTitle: "Marketing Manager" },
