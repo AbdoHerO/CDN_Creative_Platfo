@@ -4,11 +4,13 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { Channel, CreativeCategory, VersionType } from "@/generated/prisma/enums";
 import { getRequestMeta, requireActionUser } from "@/lib/auth/current-user";
+import { can } from "@/lib/permissions";
 import { STATUS_LABELS } from "@/lib/constants";
 import { WORKFLOW, type WorkflowAction } from "@/lib/workflow";
 import { parseInput, runAction } from "@/server/action-utils";
 import { deleteCreative, deleteFile, moveFile, setCurrentFile, updateCreativeMetadata } from "@/server/services/creatives";
-import { submitCreatives, transitionCreative } from "@/server/services/validation";
+import { actionableCreativeIds, parseLibraryParams } from "@/server/queries/library";
+import { bulkTransition, transitionCreative } from "@/server/services/validation";
 
 const id = z.string().min(1).max(64);
 
@@ -54,18 +56,43 @@ export async function transitionCreativeAction(creativeId: string, input: z.inpu
   return result;
 }
 
-/** Library edit mode: submit every selected draft (or declined creative) for validation. */
-export async function bulkSubmitAction(creativeIds: string[]) {
+const BULK_LIMIT = 500;
+const bulkSchema = z.object({
+  action: z.enum(["submit", "approve"]),
+  /** The selected creatives… */
+  ids: z.array(id).min(1).max(BULK_LIMIT).optional(),
+  /** …or every creative matching a validation tab and the current filters (all pages). */
+  all: z
+    .object({
+      status: z.enum(["DRAFT", "DECLINED", "PENDING", "IN_REVIEW"]),
+      search: z.record(z.string(), z.string().max(500)),
+    })
+    .optional(),
+});
+
+/**
+ * Bulk validation: submit or approve the selected creatives, or every creative
+ * of a validation tab matching the current filters. The matching set is
+ * recomputed here with the user's own visibility (creators: their creatives).
+ */
+export async function bulkWorkflowAction(input: z.input<typeof bulkSchema>) {
   const result = await runAction(async () => {
     const user = await requireActionUser();
-    const ids = parseInput(z.array(id).min(1).max(500), creativeIds);
-    const res = await submitCreatives(user, ids, await getRequestMeta());
+    const data = parseInput(bulkSchema, input);
+    let ids = data.ids ?? [];
+    if (!data.ids && data.all) {
+      const params = parseLibraryParams(data.all.search);
+      if (!can(user.role, "creative.review")) params.uploader = user.id;
+      ids = await actionableCreativeIds(user, params, data.all.status, BULK_LIMIT);
+    }
+    const res = await bulkTransition(user, ids, data.action, await getRequestMeta());
     revalidateCreative();
-    return res;
+    return { ...res, limited: ids.length === BULK_LIMIT && !data.ids };
   });
   if (result.ok) {
-    const { submitted, skipped } = result.data;
-    result.message = `${submitted} creative${submitted === 1 ? "" : "s"} submitted for validation${skipped ? ` (${skipped} skipped)` : ""}.`;
+    const { done, skipped, limited } = result.data;
+    const verb = input.action === "approve" ? "approved" : "submitted for validation";
+    result.message = `${done} creative${done === 1 ? "" : "s"} ${verb}${skipped ? ` (${skipped} skipped)` : ""}.${limited ? ` Only the first ${BULK_LIMIT} were processed: run it again for the rest.` : ""}`;
   }
   return result;
 }

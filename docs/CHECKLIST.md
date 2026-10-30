@@ -77,6 +77,7 @@ Status values: **COMPLETED**, **IN PROGRESS**, **NOT STARTED**, **BLOCKED** (gen
 | 61 | Install on the home screen (manifest, icons) with an Android / iPhone prompt shown sparingly (after engagement, once per session, 7 then 30-day snooze, stops after 3 or "Don't ask again") | COMPLETED (emulated) | 16 scripted checks on emulated iPhone 13, Pixel 7 and desktop; a real-device install needs the HTTPS deployment |
 | 62 | Fast navigation and cached media: instant loading screens, 30 s client cache, cacheable stable URLs for thumbnails and videos (also on the creative page), lite-only preloading in the feed | COMPLETED | production build on an emulated iPhone 13 throttled to 4G: the screen changes about 50 ms after a tap, pages revisited within 30 s show in about 60 ms with no server request, thumbnails and the creative video come from the browser cache on the next visit (`Cache-Control: private, max-age=7200` confirmed on the RustFS test server); E suite passed against the production build |
 | 63 | Streaming copies of heavy videos (720p H.264, fast start) made by the worker, also for existing videos; used by hover previews, the phone feed and the creative page (Smooth / Original switch); originals and downloads unchanged | COMPLETED | U `stream-copy.test.ts`; I heavy MP4 and MKV copies (fast start, smaller, original untouched, kept on reprocessing) and backfill; dev worker turned the 104.5 MB `winmed_promo_reel_final_v2.mp4` into a 7.1 MB copy in 17 s; phone and desktop playback checked |
+| 64 | Bulk validation on the Pending Validation page: Submit all / Approve all for the whole tab (current filters, all pages), Select + Submit / Approve for some, approve drafts in one step, one summary notification per person | COMPLETED | I `bulkTransition` (submit, approve from draft with full history, skips, summary notifications) and the tab-wide matching; E `bulk-validation.spec.ts` (creator Submit all, manager Approve selected then Approve all, viewer sees them approved) |
 
 ## Workflow, team and management
 
@@ -103,8 +104,8 @@ Status values: **COMPLETED**, **IN PROGRESS**, **NOT STARTED**, **BLOCKED** (gen
 | ESLint | `npm run lint` | clean |
 | TypeScript | `npm run typecheck` | clean |
 | Unit (Vitest) | `npx vitest run --project unit` | 63 passed |
-| Integration (Vitest, real PostgreSQL 16 + S3-compatible emulator) | `npx vitest run --project integration` | 64 passed |
-| End-to-end (Playwright, worker, RustFS test bucket; desktop and iPhone 13 viewports) | `npm run test:e2e` | 26 passed on the dev server and 26 passed on the production build |
+| Integration (Vitest, real PostgreSQL 16 + S3-compatible emulator) | `npx vitest run --project integration` | 66 passed |
+| End-to-end (Playwright, worker, RustFS test bucket; desktop and iPhone 13 viewports) | `npm run test:e2e` | 28 passed |
 | Production build | `npm run build` | success (38 routes) |
 | Dependency audit | `npm audit --omit=dev` | 0 vulnerabilities |
 

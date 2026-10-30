@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { AppError, ForbiddenError, NotFoundError } from "@/lib/errors";
 import { notifyUsers, reviewerIdsFor } from "@/lib/notifications";
 import {
+  can,
   canArchiveCreative,
   canRestoreCreative,
   canReviewCreative,
@@ -13,7 +14,7 @@ import {
   type CreativeRef,
 } from "@/lib/permissions";
 import type { RequestMeta } from "@/lib/request";
-import { planTransition, VALIDATION_ACTION_LABELS, WorkflowError, type WorkflowAction } from "@/lib/workflow";
+import { BULK_FROM, planTransition, VALIDATION_ACTION_LABELS, WorkflowError, type BulkAction, type WorkflowAction } from "@/lib/workflow";
 import { lockCreative } from "./creatives";
 
 /**
@@ -49,30 +50,86 @@ function authorize(actor: Actor, action: WorkflowAction, creative: CreativeRef):
   }
 }
 
+type Transitioned = Awaited<ReturnType<typeof transitionCreative>>;
+
 /**
- * Library edit mode: submit several creatives for validation at once. Those that
- * cannot be submitted (wrong status, no full version, not allowed, deleted) are
- * skipped; any other error stops the batch.
+ * Bulk validation (Pending Validation page and library selection): submit or
+ * approve many creatives at once. Approving a draft or declined creative submits
+ * it first, so it goes straight to Approved with the full history. Creatives that
+ * cannot take the action (wrong status, no full version, failed integrity check,
+ * not allowed, deleted) are skipped; any other error stops the batch. People get
+ * one summary notification instead of one per creative.
  */
-export async function submitCreatives(actor: Actor & { name: string }, creativeIds: string[], meta?: RequestMeta | null) {
+export async function bulkTransition(actor: Actor & { name: string }, creativeIds: string[], action: BulkAction, meta?: RequestMeta | null) {
+  if (action === "approve" && !can(actor.role, "creative.review")) throw new ForbiddenError("Only reviewers can approve creatives.");
   const ids = [...new Set(creativeIds)];
-  let submitted = 0;
+  const done: Transitioned[] = [];
   for (const creativeId of ids) {
     try {
-      await transitionCreative(actor, creativeId, "submit", {}, meta);
-      submitted++;
+      const current = await prisma.creative.findUnique({ where: { id: creativeId }, select: { status: true } });
+      if (!current || !BULK_FROM[action].includes(current.status)) continue;
+      if (action === "submit" || current.status === "DRAFT" || current.status === "DECLINED") {
+        const submitted = await transitionCreative(actor, creativeId, "submit", { quiet: true }, meta);
+        if (action === "submit") {
+          done.push(submitted);
+          continue;
+        }
+      }
+      done.push(await transitionCreative(actor, creativeId, "approve", { quiet: true }, meta));
     } catch (err) {
       if (!(err instanceof AppError || err instanceof WorkflowError)) throw err;
     }
   }
-  return { submitted, skipped: ids.length - submitted };
+  await notifyBulk(actor, action, done);
+  return { done: done.length, skipped: ids.length - done.length };
+}
+
+/** One notification per person for a whole batch (the single-creative wording when there is only one). */
+async function notifyBulk(actor: Actor & { name: string }, action: BulkAction, done: Transitioned[]) {
+  const byUser = new Map<string, Transitioned[]>();
+  const add = (userId: string | null, c: Transitioned) => {
+    if (userId) byUser.set(userId, [...(byUser.get(userId) ?? []), c]);
+  };
+  if (action === "submit") {
+    const reviewers = new Map<string, string[]>();
+    for (const c of done) {
+      if (!reviewers.has(c.applicationId)) reviewers.set(c.applicationId, await reviewerIdsFor(c.applicationId));
+      for (const id of reviewers.get(c.applicationId)!) add(id, c);
+    }
+  } else {
+    for (const c of done) add(c.createdById, c);
+  }
+  for (const [userId, list] of byUser) {
+    const one = list.length === 1 ? list[0] : null;
+    await notifyUsers(
+      [userId],
+      action === "submit"
+        ? {
+            type: "CREATIVE_SUBMITTED",
+            title: one ? `New creative to validate: ${one.name}` : `${list.length} new creatives to validate`,
+            body: one ? `${actor.name} submitted it for validation.` : `${actor.name} submitted ${list.length} creatives for validation.`,
+            link: one ? `/creatives/${one.id}` : "/validation?tab=PENDING",
+            creativeId: one?.id,
+            actorId: actor.id,
+          }
+        : {
+            type: "CREATIVE_APPROVED",
+            title: one ? `Approved: ${one.name}` : `${list.length} of your creatives were approved`,
+            body: one ? `${actor.name} approved your creative.` : `${actor.name} approved ${list.length} of your creatives.`,
+            link: one ? `/creatives/${one.id}` : "/approved",
+            creativeId: one?.id,
+            actorId: actor.id,
+          },
+    );
+  }
 }
 
 export async function transitionCreative(
   actor: Actor & { name: string },
   creativeId: string,
   action: WorkflowAction,
-  input: { comment?: string | null },
+  /** quiet: no notifications (bulk actions send one summary instead). */
+  input: { comment?: string | null; quiet?: boolean },
   meta?: RequestMeta | null,
 ) {
   const comment = input.comment?.trim() || null;
@@ -153,7 +210,7 @@ export async function transitionCreative(
 
     const link = `/creatives/${creative.id}`;
     const owner = creative.createdById ? [creative.createdById] : [];
-    switch (action) {
+    switch (input.quiet ? null : action) {
       case "submit":
         await notifyUsers(
           await reviewerIdsFor(creative.applicationId, tx),
@@ -174,7 +231,7 @@ export async function transitionCreative(
         await notifyUsers(owner, { type: "SYSTEM", title: `Review reopened: ${creative.name}`, body: comment, link, creativeId: creative.id, actorId: actor.id }, tx);
         break;
     }
-    return { status: finalStatus, name: creative.name };
+    return { id: creative.id, status: finalStatus, name: creative.name, applicationId: creative.applicationId, createdById: creative.createdById };
   });
   return result;
 }

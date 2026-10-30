@@ -11,6 +11,7 @@ import { timeAgo } from "@/lib/format";
 import { can } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { creativeVisibilityWhere } from "@/lib/visibility";
+import { countActionableCreatives, parseLibraryParams } from "@/server/queries/library";
 
 export const metadata: Metadata = { title: "Pending Validation" };
 
@@ -22,8 +23,9 @@ const TABS = [
 
 /**
  * Validation queue with the library's look: tabs for submitted, in-review and
- * not-yet-submitted creatives, the same filters and cards, and the workflow
- * buttons (submit, approve, decline…) under each creative.
+ * not-yet-submitted creatives, the same filters and cards, the workflow buttons
+ * (submit, approve, decline…) under each creative, and bulk actions: select
+ * cards, or "Submit all" / "Approve all" for every creative of the tab.
  */
 export default async function ValidationPage({ searchParams }: PageProps<"/validation">) {
   const user = await requireUser();
@@ -33,13 +35,18 @@ export default async function ValidationPage({ searchParams }: PageProps<"/valid
   // Creators see their own creatives here; reviewers see everything they can access.
   const scope = { AND: [creativeVisibilityWhere(user), reviewer ? {} : { createdById: user.id }] };
   const [byStatus, oldest] = await Promise.all([
-    prisma.creative.groupBy({ by: ["status"], where: { AND: [scope, { status: { in: ["PENDING", "IN_REVIEW", "DRAFT"] } }] }, _count: { _all: true } }),
+    // Creatives with at least one file: an upload that failed leaves an empty one until maintenance removes it.
+    prisma.creative.groupBy({ by: ["status"], where: { AND: [scope, { status: { in: ["PENDING", "IN_REVIEW", "DRAFT"] }, files: { some: {} } }] }, _count: { _all: true } }),
     prisma.creative.findFirst({ where: { AND: [scope, { status: { in: ["PENDING", "IN_REVIEW"] } }] }, orderBy: { submittedAt: "asc" }, select: { submittedAt: true } }),
   ]);
   const count = (s: CreativeStatus) => byStatus.find((b) => b.status === s)?._count._all ?? 0;
   const requested = TABS.find((t) => t.status === sp.tab)?.status;
   // Nothing submitted yet: open on the drafts so the page is never needlessly empty.
-  const tab: CreativeStatus = requested ?? (count("PENDING") === 0 && count("IN_REVIEW") === 0 && count("DRAFT") > 0 ? "DRAFT" : "PENDING");
+  const tab = requested ?? (count("PENDING") === 0 && count("IN_REVIEW") === 0 && count("DRAFT") > 0 ? "DRAFT" : "PENDING");
+  // What "Submit all" / "Approve all" acts on: this tab with the current search and filters.
+  const filters = parseLibraryParams(sp);
+  if (!reviewer) filters.uploader = user.id;
+  const bulkCount = await countActionableCreatives(user, filters, tab);
 
   return (
     <>
@@ -92,11 +99,12 @@ export default async function ValidationPage({ searchParams }: PageProps<"/valid
         fixed={{ status: tab, uploader: reviewer ? undefined : user.id }}
         extraParams={{ tab }}
         workflow
+        bulkTab={{ status: tab, count: bulkCount }}
         emptyTitle={tab === "DRAFT" ? "No drafts" : tab === "PENDING" ? "Nothing waiting for validation" : "Nothing in review"}
         emptyDescription={
           tab === "DRAFT"
             ? "Every creative has been submitted."
-            : "Submit drafts from the Drafts tab (one by one, or several at once with Edit badges → Submit in the library)."
+            : "Submit drafts from the Drafts tab: one by one, all at once with Submit all, or a few with Select."
         }
       />
     </>

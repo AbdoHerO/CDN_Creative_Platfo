@@ -82,6 +82,19 @@ export type TransitionStep = { action: ValidationAction; from: CreativeStatus; t
 export class WorkflowError extends Error {}
 
 /**
+ * Bulk validation actions (selection bar and "all" buttons). `approve` takes a
+ * creative all the way to Approved: drafts and declined creatives are submitted
+ * first, and every step is recorded in the history.
+ */
+export type BulkAction = "submit" | "approve";
+
+/** Statuses a bulk action applies to. */
+export const BULK_FROM: Record<BulkAction, CreativeStatus[]> = {
+  submit: ["DRAFT", "DECLINED"],
+  approve: ["DRAFT", "DECLINED", "PENDING", "IN_REVIEW"],
+};
+
+/**
  * Resolve the status steps a workflow action produces from the current status.
  * Throws WorkflowError when the transition is not allowed.
  */

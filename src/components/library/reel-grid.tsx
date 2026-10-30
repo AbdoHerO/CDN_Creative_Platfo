@@ -45,7 +45,7 @@ export function ReelGrid({
 }) {
   const [feedIndex, setFeedIndex] = useState<number | null>(null);
   const closeFeed = useCallback(() => setFeedIndex(null), []);
-  const { editing } = useLibraryEdit();
+  const { editing, badges } = useLibraryEdit();
   return (
     <>
       <ul className={cn("grid", GRID[shape])} data-testid="reel-grid">
@@ -53,7 +53,7 @@ export function ReelGrid({
           <li key={item.fileId} className="min-w-0">
             <ReelCard item={item} shape={shape} onOpenFeed={() => setFeedIndex(i)} />
             {editing ? (
-              <CardBadgeEditor key={item.badges.map((b) => b.id).join()} creativeId={item.creativeId} badges={item.badges} />
+              badges && <CardBadgeEditor key={item.badges.map((b) => b.id).join()} creativeId={item.creativeId} badges={item.badges} />
             ) : (
               !!actions?.[item.creativeId]?.length && (
                 <div className="mt-2 flex flex-wrap gap-1.5 [&>button]:h-8 [&>button]:flex-1 [&>button]:px-2 [&>button]:text-xs">

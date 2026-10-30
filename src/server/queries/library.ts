@@ -230,6 +230,30 @@ export type LibraryItem = {
   imageUrl: string | null;
 };
 
+/**
+ * Creatives the library lists for these filters, across all pages, that have a
+ * current full version (what a validation action needs). Used by the bulk
+ * "Submit all" / "Approve all" buttons.
+ */
+function actionableWhere(user: SessionUser, p: Partial<LibraryParams>, fixedStatus?: CreativeStatus): Prisma.CreativeWhereInput {
+  const mediaType = effectiveMediaType(p);
+  return {
+    AND: [
+      buildCreativeWhere(user, p, fixedStatus),
+      { files: { some: { isCurrent: true, versionType: "FULL", ...(mediaType ? { mediaType } : {}), ...(p.format ? { extension: p.format } : {}) } } },
+    ],
+  };
+}
+
+export async function countActionableCreatives(user: SessionUser, p: Partial<LibraryParams>, fixedStatus?: CreativeStatus) {
+  return prisma.creative.count({ where: actionableWhere(user, p, fixedStatus) });
+}
+
+export async function actionableCreativeIds(user: SessionUser, p: Partial<LibraryParams>, fixedStatus: CreativeStatus | undefined, limit: number) {
+  const rows = await prisma.creative.findMany({ where: actionableWhere(user, p, fixedStatus), orderBy: { createdAt: "asc" }, take: limit, select: { id: true } });
+  return rows.map((r) => r.id);
+}
+
 export async function queryLibrary(
   user: SessionUser,
   params: LibraryParams,

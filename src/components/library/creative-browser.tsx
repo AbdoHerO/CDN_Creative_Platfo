@@ -7,11 +7,11 @@ import type { CreativeStatus } from "@/generated/prisma/enums";
 import type { SessionUser } from "@/lib/auth/session-core";
 import { can, canReviewCreative, canSubmitCreative, canWithdrawCreative, type CreativeRef } from "@/lib/permissions";
 import { getSettings } from "@/lib/settings";
-import { availableActions, type WorkflowAction } from "@/lib/workflow";
+import { availableActions, type BulkAction, type WorkflowAction } from "@/lib/workflow";
 import { activeKind, libraryCounts, libraryFacets, parseLibraryParams, queryLibrary, type LibraryItem } from "@/server/queries/library";
 import { listBadges } from "@/server/services/badges";
 import { CreativeList } from "./creative-items";
-import { LibraryEditProvider } from "./edit-mode";
+import { BulkTabBar, LibraryEditProvider } from "./edit-mode";
 import { LibraryFilters } from "./library-filters";
 import { LibraryHero } from "./library-hero";
 import { ReelGrid } from "./reel-grid";
@@ -19,6 +19,17 @@ import { ReelGrid } from "./reel-grid";
 type Fixed = { status?: CreativeStatus; app?: string; campaign?: string; uploader?: string };
 
 const QUEUE_ACTIONS: WorkflowAction[] = ["submit", "startReview", "approve", "requestChanges", "decline", "withdraw"];
+
+/** Validation actions offered on a selection: submit for creators and reviewers, approve for reviewers. */
+function bulkActionsFor(user: SessionUser, status?: CreativeStatus): BulkAction[] {
+  if (status === "APPROVED" || status === "ARCHIVED") return [];
+  const reviewer = can(user.role, "creative.review");
+  const pendingOnly = status === "PENDING" || status === "IN_REVIEW";
+  return [
+    ...(!pendingOnly && (reviewer || can(user.role, "creative.upload")) ? (["submit"] as const) : []),
+    ...(reviewer ? (["approve"] as const) : []),
+  ];
+}
 
 /** Workflow buttons the user may use on a library row (same rules as the creative page). */
 function rowActions(user: SessionUser, item: LibraryItem): WorkflowAction[] {
@@ -44,6 +55,7 @@ export async function CreativeBrowser({
   emptyDescription = "Uploaded creatives will appear here.",
   workflow = false,
   extraParams = {},
+  bulkTab,
 }: {
   user: SessionUser;
   basePath: string;
@@ -55,6 +67,8 @@ export async function CreativeBrowser({
   workflow?: boolean;
   /** Parameters of the hosting page kept in pagination links (e.g. the queue tab). */
   extraParams?: Record<string, string>;
+  /** Validation tab: number of creatives the "Submit all" / "Approve all" bar acts on. */
+  bulkTab?: { status: "DRAFT" | "DECLINED" | "PENDING" | "IN_REVIEW"; count: number };
 }) {
   const params = parseLibraryParams(searchParams);
   if (fixed.app) params.app = fixed.app;
@@ -105,7 +119,14 @@ export async function CreativeBrowser({
   };
 
   return (
-    <LibraryEditProvider enabled={canEditBadges} catalog={badgeCatalog} canCreate={canEditBadges} pageIds={[...new Set(result.items.map((i) => i.creativeId))]}>
+    <LibraryEditProvider
+      badges={canEditBadges}
+      actions={bulkActionsFor(user, fixed.status)}
+      tab={bulkTab ?? null}
+      catalog={badgeCatalog}
+      canCreate={canEditBadges}
+      pageIds={[...new Set(result.items.map((i) => i.creativeId))]}
+    >
     <div className="space-y-5">
       <LibraryHero
         applications={facets.applications}
@@ -140,6 +161,8 @@ export async function CreativeBrowser({
         showPreviews={result.showPreviews}
         total={result.total}
       />
+
+      {bulkTab && <BulkTabBar />}
 
       {result.items.length === 0 ? (
         hasFilters ? (

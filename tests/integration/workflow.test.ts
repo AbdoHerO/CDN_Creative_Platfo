@@ -5,7 +5,8 @@ import { newId } from "@/lib/ids";
 import { creativeVisibilityWhere } from "@/lib/visibility";
 import { WorkflowError } from "@/lib/workflow";
 import { attachFile, createCreativeRecord } from "@/server/services/creatives";
-import { submitCreatives, transitionCreative } from "@/server/services/validation";
+import { actionableCreativeIds, countActionableCreatives } from "@/server/queries/library";
+import { bulkTransition, transitionCreative } from "@/server/services/validation";
 import { resetDatabase, seedWorld, type World } from "./helpers";
 
 let world: World;
@@ -48,7 +49,7 @@ async function creativeWithFile(ownerId: string, opts: { versionType?: "FULL" | 
 }
 
 describe("validation workflow", () => {
-  it("submits several creatives at once (library edit mode) and skips those that cannot be submitted", async () => {
+  it("submits several creatives at once and skips those that cannot be submitted, with one notification per reviewer", async () => {
     const { creator, creator2 } = world.users;
     const draft = await creativeWithFile(creator.id, { name: "Draft A" });
     const pending = await creativeWithFile(creator.id, { name: "Already pending" });
@@ -56,10 +57,47 @@ describe("validation workflow", () => {
     const previewOnly = await creativeWithFile(creator.id, { name: "Preview only", versionType: "PREVIEW" });
     const someoneElse = await creativeWithFile(creator2.id, { name: "Not mine" });
 
-    const res = await submitCreatives(creator, [draft.id, pending.id, previewOnly.id, someoneElse.id, draft.id, "missing-id"]);
-    expect(res).toEqual({ submitted: 1, skipped: 4 });
+    const before = await prisma.notification.count();
+    const res = await bulkTransition(creator, [draft.id, pending.id, previewOnly.id, someoneElse.id, draft.id, "missing-id"], "submit");
+    expect(res).toEqual({ done: 1, skipped: 4 });
+    // admin + manager, one each.
+    expect(await prisma.notification.count()).toBe(before + 2);
     const statuses = await prisma.creative.findMany({ where: { id: { in: [draft.id, previewOnly.id, someoneElse.id] } }, select: { name: true, status: true } });
     expect(Object.fromEntries(statuses.map((c) => [c.name, c.status]))).toEqual({ "Draft A": "PENDING", "Preview only": "DRAFT", "Not mine": "DRAFT" });
+  });
+
+  it("reviewers approve in bulk, drafts included, with the full history and one summary notification", async () => {
+    const { creator, manager } = world.users;
+    const draft = await creativeWithFile(creator.id, { name: "Draft" });
+    const pending = await creativeWithFile(creator.id, { name: "Pending" });
+    await transitionCreative(creator, pending.id, "submit", {});
+    const approved = await creativeWithFile(creator.id, { name: "Already approved" });
+    await transitionCreative(creator, approved.id, "submit", {});
+    await transitionCreative(manager, approved.id, "approve", {});
+    await expect(bulkTransition(creator, [draft.id], "approve")).rejects.toBeInstanceOf(ForbiddenError);
+
+    const before = await prisma.notification.count({ where: { userId: creator.id } });
+    expect(await bulkTransition(manager, [draft.id, pending.id, approved.id], "approve")).toEqual({ done: 2, skipped: 1 });
+    const statuses = await prisma.creative.findMany({ where: { id: { in: [draft.id, pending.id] } }, select: { status: true } });
+    expect(statuses.map((c) => c.status)).toEqual(["APPROVED", "APPROVED"]);
+    const history = await prisma.validation.findMany({ where: { creativeId: draft.id }, orderBy: { createdAt: "asc" } });
+    expect(history.map((h) => h.action)).toEqual(["SUBMITTED", "REVIEW_STARTED", "APPROVED"]);
+    const notes = await prisma.notification.findMany({ where: { userId: creator.id }, orderBy: { createdAt: "desc" } });
+    expect(notes.length).toBe(before + 1);
+    expect(notes[0]).toMatchObject({ type: "CREATIVE_APPROVED", title: "2 of your creatives were approved", link: "/approved" });
+  });
+
+  it("finds every creative of a validation tab across pages, scoped like the queue", async () => {
+    const { creator, creator2, manager } = world.users;
+    for (const name of ["Spot A", "Spot B", "Spot C"]) await creativeWithFile(creator.id, { name });
+    await creativeWithFile(creator2.id, { name: "Spot of someone else" });
+    await creativeWithFile(creator.id, { name: "Lite only", versionType: "PREVIEW" });
+    expect(await countActionableCreatives(manager, { kind: "all" }, "DRAFT")).toBe(4);
+    expect(await countActionableCreatives(creator, { kind: "all", uploader: creator.id }, "DRAFT")).toBe(3);
+    expect(await countActionableCreatives(manager, { kind: "all", q: "someone" }, "DRAFT")).toBe(1);
+    const ids = await actionableCreativeIds(creator, { kind: "all", uploader: creator.id }, "DRAFT", 500);
+    expect(await bulkTransition(creator, ids, "submit")).toEqual({ done: 3, skipped: 0 });
+    expect(await countActionableCreatives(manager, { kind: "all" }, "PENDING")).toBe(3);
   });
 
   it("creator submits, reviewers are notified, manager approves with a full history", async () => {
