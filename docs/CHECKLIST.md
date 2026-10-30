@@ -64,6 +64,11 @@ Status values: **COMPLETED**, **IN PROGRESS**, **NOT STARTED**, **BLOCKED** (gen
 | 48 | Library filter banner: platforms, validation (approved / not yet / declined), with or without preview, live counts | COMPLETED | I `library.test.ts` banner filters and counts; manual walkthrough |
 | 49 | Modern video player (custom controls, speed, PiP, full screen, keyboard) | COMPLETED | manual walkthrough (playback confirmed) |
 | 50 | Badges chosen before import (per creative and in bulk, create with colour) and after import on the creative page | COMPLETED | I import test (reviewed badges applied); manual walkthrough |
+| 51 | PDF creatives: `<platform>/pdf/` import folder, *Document (PDF)* category, page count and first-page thumbnail | COMPLETED | U real folder incl. `cms-whatsapp-sender`; I import + worker (3-page PDF: page count, thumbnail) |
+| 52 | Professional PDF reader (thumbnails, continuous scroll, selectable text, zoom, rotate, full screen, keyboard) | COMPLETED | manual walkthrough with real PDFs (14 pages, text layer, navigation, zoom) |
+| 53 | Library content tabs: Videos (default), Banners, PDFs, All, with counts | COMPLETED | I `library.test.ts` content tabs; manual walkthrough |
+| 54 | Mobile: no horizontal overflow, bottom navigation, filter sheet, full-screen swipe feed with autoplay | COMPLETED | mobile audit (iPhone 13, every page: no overflow); manual walkthrough (feed autoplay, swipe, back gesture) |
+| 55 | Docker image builds (`npm ci` with Prisma schema), runs migrations, worker service in compose | COMPLETED | deps-stage `prisma generate` and `migrate status` reproduced without Docker |
 
 ## Workflow, team and management
 
@@ -90,7 +95,7 @@ Status values: **COMPLETED**, **IN PROGRESS**, **NOT STARTED**, **BLOCKED** (gen
 | ESLint | `npm run lint` | clean |
 | TypeScript | `npm run typecheck` | clean |
 | Unit (Vitest) | `npx vitest run --project unit` | 60 passed |
-| Integration (Vitest, real PostgreSQL 16 + S3-compatible emulator) | `npx vitest run --project integration` | 56 passed |
+| Integration (Vitest, real PostgreSQL 16 + S3-compatible emulator) | `npx vitest run --project integration` | 57 passed |
 | End-to-end (Playwright, dev server + worker, RustFS bucket) | `npm run test:e2e` | 22 passed |
 | Production build | `npm run build` | success (37 routes) |
 | Dependency audit | `npm audit --omit=dev` | 0 vulnerabilities |

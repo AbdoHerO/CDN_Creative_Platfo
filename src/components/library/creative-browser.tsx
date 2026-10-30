@@ -7,7 +7,7 @@ import type { CreativeStatus } from "@/generated/prisma/enums";
 import type { SessionUser } from "@/lib/auth/session-core";
 import { can } from "@/lib/permissions";
 import { getSettings } from "@/lib/settings";
-import { libraryCounts, libraryFacets, parseLibraryParams, queryLibrary } from "@/server/queries/library";
+import { activeKind, libraryCounts, libraryFacets, parseLibraryParams, queryLibrary } from "@/server/queries/library";
 import { CreativeList } from "./creative-items";
 import { LibraryFilters } from "./library-filters";
 import { LibraryHero } from "./library-hero";
@@ -46,6 +46,8 @@ export async function CreativeBrowser({
   const showPlatforms = !fixed.app && facets.applications.length > 1;
   // Viewers only ever see approved creatives, and status pages are fixed to one status.
   const showReview = !fixed.status && user.role !== "VIEWER";
+  const kind = activeKind(params);
+  const KIND_EMPTY = { video: "No videos here yet", banner: "No banners here yet", pdf: "No PDFs here yet", all: emptyTitle } as const;
   const view = params.view ?? (user.libraryView === "LIST" ? "list" : "grid");
   const hasFilters = Boolean(
     params.q || params.category || params.type || params.format || params.tag || params.badge || params.review || params.lite || params.uploader || params.from || params.to ||
@@ -59,6 +61,7 @@ export async function CreativeBrowser({
     category: params.category,
     status: fixed.status ? undefined : params.status,
     type: params.type,
+    kind: params.kind !== "video" ? params.kind : undefined,
     format: params.format,
     tag: params.tag,
     badge: params.badge,
@@ -77,7 +80,7 @@ export async function CreativeBrowser({
       <LibraryHero
         applications={facets.applications}
         counts={counts}
-        values={{ app: params.app ?? "", review: params.review ?? "", lite: params.lite ?? "" }}
+        values={{ app: params.app ?? "", review: params.review ?? "", lite: params.lite ?? "", kind }}
         showPlatforms={showPlatforms}
         showReview={showReview}
       />
@@ -116,7 +119,11 @@ export async function CreativeBrowser({
             </Button>
           </EmptyState>
         ) : (
-          <EmptyState icon={Library} title={emptyTitle} description={emptyDescription}>
+          <EmptyState
+            icon={Library}
+            title={KIND_EMPTY[kind]}
+            description={kind === "all" ? emptyDescription : "Switch to another tab above, or upload new creatives."}
+          >
             {can(user.role, "creative.upload") && (
               <Button asChild size="sm">
                 <Link href="/upload">Upload creatives</Link>
@@ -127,7 +134,7 @@ export async function CreativeBrowser({
       ) : view === "list" ? (
         <CreativeList items={result.items} />
       ) : (
-        <ReelGrid items={result.items} />
+        <ReelGrid items={result.items} shape={kind === "banner" || kind === "pdf" ? "landscape" : "portrait"} />
       )}
 
       <UrlPagination basePath={basePath} params={linkParams} page={result.page} pageSize={result.pageSize} total={result.total} />

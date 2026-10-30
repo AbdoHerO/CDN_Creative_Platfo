@@ -116,7 +116,7 @@ Open <http://localhost:3000> and sign in with the seeded admin account.
 | **Match key** | The normalised base name used to pair files: `Summer_Promo_preview.MP4` → `summer promo`. |
 | **Badge** | A coloured label on a creative, such as *Motion graphique*, *Higgsfield*, *3D* or *Sans miniature*. Admins and managers manage the list in **Settings → Badges**. |
 | **Status** | `DRAFT`, `PENDING`, `IN_REVIEW`, `APPROVED`, `DECLINED` or `ARCHIVED` (see [4.9](#49-validation-workflow)). |
-| **Category** | Marketing video, Advertising video, Social media post, Banner, Promotional image, Campaign visual, Other. |
+| **Category** | Marketing video, Advertising video, Social media post, Banner, Promotional image, Campaign visual, Document (PDF), Other. |
 | **Channels** | Where a creative is used: Instagram, Facebook, LinkedIn, TikTok, YouTube, X, WhatsApp, Website, Email, Display ads, In-app, Print, Other. |
 | **Integrity** | `VERIFIED` (the worker recomputed the SHA-256 from storage and it matches the browser's), `MISMATCH` (it does not; approval is blocked), `PENDING` or `UNVERIFIED`. |
 | **Processing** | The worker's thumbnail and metadata extraction: `PENDING`, `PROCESSING`, `READY` or `FAILED`. A failure never affects the stored original. |
@@ -168,11 +168,13 @@ All figures come live from the database and respect your permissions (a viewer o
 
 `/library` lists every creative you can see.
 
-- **Filter banner** at the top, with live counts that take the other active filters into account:
+- **Content tabs** at the top of the banner: **Videos** (the default), **Banners** (images), **PDFs** and **All**, each with its count. Banners and PDFs use landscape 4:3 cards.
+- **Filter banner** below the tabs, with live counts that take the other active filters into account:
   - **Platform** chips: *All platforms* or one platform (brand colour and initials).
   - **Validation:** *All*, *Approved*, *Not yet* (draft, pending or in review) or *Declined*. Hidden for viewers, who only see approved creatives, and on the Approved / Declined / Archived pages.
   - **Lite version:** *All*, *With preview* or *Without preview*.
 - **Reels grid or list view.** The grid shows tall 9:16 cards, like short-video ad libraries: the creative fitted on a blurred backdrop, with the platform, status, badges, name, duration, format and size over a gradient. A **LITE** tag means the creative has a preview version. **Hovering a video card plays a muted clip** (the first 6 seconds, looped) of the lite version when there is one, otherwise of the video itself. Clicking opens the creative. The list view shows the same information in a table. Your choice is remembered.
+- **On phones** the library works like a short-video app: a two-column grid, a **Filters** button that opens every filter in a bottom sheet, and a bottom bar (Library, Search, **+** Upload, Validation, Menu). **Tapping a card opens a full-screen feed**: swipe up and down between creatives, the visible video plays automatically (muted; tap **Sound**), the next one is preloaded, and the right-hand rail offers Details, Download, Pause and Share. The phone's back gesture closes the feed. The feed contains the creatives of the current page.
 - **Search** across names, descriptions, keywords, tags, campaign names, application names and original filenames. Every word must match (`summer banner` finds creatives that match both words).
 - **Badges** appear on each thumbnail (and under the name in list view).
 - **Filters**, which can all be combined: application, campaign, media type (video, image, document, audio), category, **badge**, status, tag, uploader, file format (`mp4`, `png`, …) and a date range.
@@ -187,7 +189,8 @@ Every filter is stored in the URL, so a filtered view can be bookmarked or share
 |---|---|---|
 | `q` | `q=summer` | Search text |
 | `app`, `campaign`, `uploader` | `app=<id>` | Application, campaign or uploader id |
-| `type` | `type=VIDEO` | `VIDEO`, `IMAGE`, `DOCUMENT`, `AUDIO`, `OTHER` |
+| `kind` | `kind=banner` | Content tab: `video` (default), `banner`, `pdf` or `all` |
+| `type` | `type=VIDEO` | `VIDEO`, `IMAGE`, `DOCUMENT`, `AUDIO`, `OTHER` (overrides the tab) |
 | `category` | `category=BANNER` | A category key |
 | `status` | `status=APPROVED` | A status key |
 | `format` | `format=mp4` | File extension |
@@ -208,7 +211,7 @@ The **Approved**, **Declined** and **Archived** pages are the same library, fixe
 **Viewer.** Files are previewed in the browser and never forced to download:
 - **Video:** a custom player with poster frame, big play button, a seek bar showing what is buffered and the time under the pointer, back/forward 10 seconds, volume, playback speed (0.5× to 2×), picture-in-picture and full screen. Controls hide while the video plays and come back when you move the mouse. Keyboard (click the player first): `Space`/`K` play or pause, `←`/`→` 5 seconds, `J`/`L` 10 seconds, `↑`/`↓` volume, `M` mute, `F` full screen; double-click for full screen. If the browser cannot play the format (MKV, AVI, some codecs), the page offers the `_preview` version or a download.
 - **Image:** zoomable viewer (zoom with the buttons or the mouse wheel, drag to pan, fit to screen, actual size 100%, full screen). Formats browsers cannot display (TIFF, HEIC, PSD) are shown through a high-resolution WebP rendition made by the worker. The original is never changed.
-- **PDF:** embedded PDF viewer.
+- **PDF:** a reader built on pdf.js: page thumbnails on the left, continuous scrolling (pages are drawn as they come into view), selectable and copyable text, zoom (*Fit width*, *Fit page*, 50 % to 300 %, `Ctrl`/`⌘` + mouse wheel), rotation, page number entry, full screen, open in a new tab and download. Keyboard (click the reader first): `←`/`→` or `Page Up`/`Page Down` previous and next page, `Home`/`End` first and last page, `+`/`−` zoom, `0` fit width, `F` full screen. Library cards of PDFs show the first page, the page count and a **PDF** tag.
 - **Audio:** audio player.
 
 **Badges.** Under the title. Anyone who may edit the creative clicks **Add badge** / **Edit badges** and ticks badges on or off; the change is saved at once. Admins and managers can also type a new name to create a badge.
@@ -288,9 +291,11 @@ data_creatives/
     banners/   banner.jpg
     videos/    spot.mp4
                spot_preview.mp4
+    pdf/       guide.pdf
   win+pharma/
     banners/
     videos/
+    pdf/
 ```
 
 **Download import template** (on the ZIP import tab) gives you this skeleton as a ZIP, with one folder for every active platform you can upload to and a `README.txt` that the import ignores.
@@ -300,7 +305,7 @@ data_creatives/
 3. The worker **analyses** the archive:
    - **Platform:** the folder just above `banners/` or `videos/` (also `banner`, `video`, `images`) names the platform. It matches an application by name, ignoring case and punctuation (`win+pharma` ↔ *Win+Pharma*, `icoral` ↔ *iCoral*). The wrapper folder (`data_creatives/`) is ignored. Archives without media folders still work: a folder named after an application anywhere in the path is used.
    - **New platform:** a platform folder that matches no application becomes a **new platform**. It is created when an administrator confirms the import; for anyone else the review asks them to choose an existing platform. A folder that matches a disabled application, or one you cannot access, falls back to the default application.
-   - **Category:** files in `banners/` get the *Banner* category; others get the default for their type (videos: *Marketing video*).
+   - **Category:** files in `banners/` get the *Banner* category and files in `pdf/` (also `pdfs`, `documents`, `docs`) the *Document (PDF)* category; others get the default for their type (videos: *Marketing video*, PDFs: *Document (PDF)*).
    - **Previews** are paired with their full version ([4.7](#47-full-and-preview-versions)).
    - **Always new creatives:** an import never adds files to creatives already in the library and never replaces anything. A name already used in the platform gets *(2)*, *(3)*…
    - **Badges:** a badge whose name appears as whole words in the file name is added automatically (`…-higgsfield.mp4` → *Higgsfield*, `…_3d_reel.mp4` → *3D*).
@@ -451,7 +456,7 @@ Every rule is enforced on the server (`src/lib/permissions.ts`, `src/lib/visibil
 | Video | `mkv`, `avi` | no (thumbnail and metadata are extracted; download or use the preview version) |
 | Image | `jpg`/`jpeg`, `png`, `gif`, `webp`, `avif`, `svg`, `bmp` | yes |
 | Image | `tif`/`tiff`, `heic`/`heif`, `psd` | through a WebP rendition (up to 2560 px) made by the worker |
-| Document | `pdf` | yes (embedded viewer) |
+| Document | `pdf` | yes (PDF reader with thumbnails, zoom and selectable text) |
 | Document | `ai`, `eps` | download; PDF-compatible `.ai` files also get a thumbnail and a preview image |
 | Audio | `mp3`, `wav`, `m4a`, `aac`, `ogg` | yes |
 | Archive | `zip` | ZIP import only |
@@ -599,6 +604,7 @@ The schema is in `prisma/schema.prisma`. Media binaries are never stored in Post
 2. `20261030022057_import_item_review`: review fields for ZIP import items.
 3. `20261030135813_badges_replace_platform_import`: badges, file replacement (`UploadSession.replacesFileId`, `FILE_REPLACED` activity) and new platforms in ZIP imports (`ImportItem.newApplicationName`).
 4. `20261030150250_import_item_badges`: badges chosen in the import review (`ImportItem.badgeIds`).
+5. `20261030152309_document_category`: the *Document (PDF)* category (`CreativeCategory.DOCUMENT`).
 
 **Seed** (`npm run db:seed`, safe to run more than once): the four roles, the four applications (Win+Pharma, iCoral, Pharmalien, WinMed), the four default badges and the first admin from `SEED_ADMIN_*`. If `SEED_ADMIN_PASSWORD` is empty or shorter than 10 characters, a temporary password is generated, printed once and must be changed at first sign-in. With `SEED_DEMO_USERS=true` (development only; refused when `NODE_ENV=production`) it also creates `manager@cmp.local`, `creator@cmp.local` and `viewer@cmp.local` (password `SEED_DEMO_PASSWORD`, or `Demo-Password-2026` when it is empty) plus sample campaigns and tags.
 
@@ -734,8 +740,8 @@ npm run demo:media
 
 | Script | Purpose |
 |---|---|
-| `npm run dev` | Development server (Turbopack) on port 3000 |
-| `npm run build` | Generate the Prisma client and build for production |
+| `npm run dev` | Copy the pdf.js runtime to `public/pdfjs`, then start the development server (Turbopack) on port 3000 |
+| `npm run build` | Generate the Prisma client, copy the pdf.js runtime to `public/pdfjs` and build for production |
 | `npm run start` | Start the production server (after `build`) |
 | `npm run worker` / `npm run worker:dev` | Background worker / worker with auto-reload |
 | `npm run db:migrate` | Apply migrations (`prisma migrate deploy`) |
@@ -839,43 +845,26 @@ The platform is **two processes** that share one database and one bucket:
 
 ### 13.1 Docker Compose (single server)
 
-```bash
-cp .env.prod.example .env.prod
-```
+The `Dockerfile` builds one image (`creative-hub-prod`) in three stages: `deps` (`npm ci`, which also runs `prisma generate` and therefore copies `prisma/` and `prisma.config.ts`), `builder` (`npm run build`, with a placeholder `DATABASE_URL` that is only used at build time) and `runner`. The runner contains the built app, the Prisma schema and config, the worker source and the tools the worker needs (ffmpeg, poppler-utils). Its default command applies the migrations and starts the web app.
 
-Edit `.env.prod` with production values (the real `APP_URL`, `URL_RUSTFS`, `BUCKET_NAME`, `ACCESS_KEY`, `SECRET_KEY` and a strong `SEED_ADMIN_PASSWORD`). Every service reads this file. Then:
+`docker-compose.yml` runs that image twice, with variables from `ENV_FILE` (default `.env.prod`):
 
-```bash
-docker compose --env-file .env.prod up -d db
-```
+| Service | Command | Role |
+|---|---|---|
+| `creative-hub-prod` | `npx prisma migrate deploy && npm run start` | Web app on port 3000 |
+| `creative-hub-worker` | `npm run worker` | Background jobs: ZIP imports, thumbnails, checksums, PDF page counts, deletions |
 
-```bash
-docker compose --env-file .env.prod run --rm migrate
-```
+Both join the external network `backend.prod` (where the reverse proxy and PostgreSQL live). Deploy with:
 
 ```bash
-docker compose --env-file .env.prod up -d web worker
-```
-
-To run RustFS on the same server, start the bundled service. It uses `ACCESS_KEY` / `SECRET_KEY` as its root credentials and allows `APP_URL` for CORS:
-
-```bash
-docker compose --env-file .env.prod --profile rustfs up -d rustfs
-```
-
-The `Dockerfile` has two targets:
-- `web`: the Next.js standalone server on port 3000, with a health check on `/api/health`.
-- `worker`: includes ffmpeg and poppler; it also provides the migrate and seed commands used by the `migrate` service.
-
-Build them individually with:
-
-```bash
-docker build --target web -t creative-hub-web .
+ENV_FILE=.env.prod docker compose build creative-hub-prod
 ```
 
 ```bash
-docker build --target worker -t creative-hub-worker .
+ENV_FILE=.env.prod docker compose up -d --force-recreate --remove-orphans
 ```
+
+The `Jenkinsfile` does the same with the env file stored as the Jenkins credential `creativehub_pro_env`, and runs `npx prisma migrate deploy` once before starting the containers. The worker's temporary folder (`WORKER_TMP_DIR`, default `/tmp`) must have room for the largest file or ZIP being processed.
 
 Put the web container and RustFS behind HTTPS (Caddy, Nginx or Traefik) and set `TRUST_PROXY=true`.
 
@@ -1018,6 +1007,7 @@ prisma/
   seed.ts                roles, applications, first admin, optional demo data
 scripts/
   storage-setup.ts       bucket check / creation and CORS
+  copy-pdfjs.mjs         copies the pdf.js worker, fonts, CMaps and decoders to public/pdfjs (git-ignored)
   demo-media.ts          sample creatives for development
 src/
   proxy.ts               CSP nonce, security headers, sign-in redirect

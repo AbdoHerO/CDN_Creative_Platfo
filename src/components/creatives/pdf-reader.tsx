@@ -53,6 +53,11 @@ async function renderPage(page: PDFPageProxy, scale: number, rotation: number, o
   return { canvas, viewport };
 }
 
+/** Scroll `container` (only) so that `el` sits at its top — never scrolls the browser window. */
+function scrollWithin(container: HTMLElement | null, el: Element | null | undefined, offset = 16) {
+  if (container && el instanceof HTMLElement) container.scrollTo({ top: Math.max(0, el.offsetTop - offset) });
+}
+
 function useVisible(ref: React.RefObject<HTMLElement | null>, root: HTMLElement | null, margin: string) {
   const [visible, setVisible] = useState(false);
   useEffect(() => {
@@ -151,7 +156,7 @@ export function PdfReader({ src, title, downloadHref, openHref }: { src: string;
   const goTo = useCallback(
     (n: number) => {
       const page = Math.max(1, Math.min(sizes.length || 1, n));
-      scroller?.querySelector(`[data-page="${page}"]`)?.scrollIntoView({ block: "start" });
+      scrollWithin(scroller, scroller?.querySelector(`[data-page="${page}"]`));
       setCurrent(page);
       setPageInput(String(page));
     },
@@ -164,7 +169,7 @@ export function PdfReader({ src, title, downloadHref, openHref }: { src: string;
     keep.current = current;
   }, [current]);
   useLayoutEffect(() => {
-    if (sizes.length) scroller?.querySelector(`[data-page="${keep.current}"]`)?.scrollIntoView({ block: "start" });
+    if (sizes.length) scrollWithin(scroller, scroller?.querySelector(`[data-page="${keep.current}"]`));
   }, [scale, rotation, sizes.length, scroller]);
 
   const onScroll = () => {
@@ -243,7 +248,7 @@ export function PdfReader({ src, title, downloadHref, openHref }: { src: string;
       aria-label={`PDF reader: ${title}`}
     >
       {/* Toolbar */}
-      <div className="flex h-12 shrink-0 items-center gap-1 border-b border-white/10 bg-neutral-950/90 px-2 backdrop-blur sm:gap-2 sm:px-3">
+      <div className="relative z-20 flex h-12 shrink-0 items-center gap-1 border-b border-white/10 bg-neutral-950/90 px-2 backdrop-blur sm:gap-2 sm:px-3">
         <ToolButton label={sidebar ? "Hide pages" : "Show pages"} onClick={() => setSidebar((s) => !s)} active={sidebar} className="hidden md:flex">
           <PanelLeft />
         </ToolButton>
@@ -331,7 +336,7 @@ export function PdfReader({ src, title, downloadHref, openHref }: { src: string;
       <div className="flex min-h-0 flex-1" onClick={() => zoomMenu && setZoomMenu(false)}>
         {/* Page thumbnails */}
         {sidebar && doc && (
-          <div ref={setThumbRoot} className="hidden w-40 shrink-0 space-y-4 overflow-y-auto border-r border-white/10 bg-neutral-950/60 p-4 md:block" aria-label="Pages">
+          <div ref={setThumbRoot} className="relative hidden w-40 shrink-0 space-y-4 overflow-y-auto border-r border-white/10 bg-neutral-950/60 p-4 md:block" aria-label="Pages">
             {sizes.map((size, i) => (
               <Thumbnail key={i} doc={doc} number={i + 1} size={size} rotation={rotation} root={thumbRoot} active={current === i + 1} onClick={() => goTo(i + 1)} />
             ))}
@@ -490,8 +495,12 @@ function Thumbnail({
   const scale = THUMB_WIDTH / dims.w;
 
   useEffect(() => {
-    if (active) ref.current?.scrollIntoView({ block: "nearest" });
-  }, [active]);
+    const el = ref.current;
+    if (!active || !el || !root) return;
+    if (el.offsetTop < root.scrollTop || el.offsetTop + el.offsetHeight > root.scrollTop + root.clientHeight) {
+      root.scrollTo({ top: Math.max(0, el.offsetTop - root.clientHeight / 3) });
+    }
+  }, [active, root]);
 
   useEffect(() => {
     if (!visible) return;

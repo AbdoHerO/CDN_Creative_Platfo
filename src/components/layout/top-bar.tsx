@@ -26,10 +26,11 @@ export function TopBar({
       <GlobalSearch />
       <div className="ml-auto flex items-center gap-1.5">
         {canUpload && (
-          <Button asChild size="sm" className="gap-1.5">
+          // On phones the bottom bar has the upload button.
+          <Button asChild size="sm" className="hidden gap-1.5 md:inline-flex">
             <Link href="/upload">
               <Plus className="size-4" />
-              <span className="hidden sm:inline">Upload</span>
+              Upload
             </Link>
           </Button>
         )}

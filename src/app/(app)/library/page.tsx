@@ -15,14 +15,16 @@ export default async function LibraryPage({ searchParams }: PageProps<"/library"
     <>
       <PageHeader
         title="Creative Library"
+        className="mb-4 sm:mb-6"
         description={
-          user.role === "VIEWER"
-            ? "Every approved creative across all applications."
-            : "Browse, search and filter every creative across all applications."
+          <span className="hidden sm:inline">
+            {user.role === "VIEWER" ? "Every approved creative across all applications." : "Browse, search and filter every creative across all applications."}
+          </span>
         }
         actions={
           can(user.role, "creative.upload") && (
-            <Button asChild>
+            // Phones upload from the bottom bar.
+            <Button asChild className="hidden md:inline-flex">
               <Link href="/upload">
                 <Upload /> Upload creatives
               </Link>

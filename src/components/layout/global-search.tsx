@@ -26,6 +26,8 @@ type SearchResults = {
 
 const EMPTY: SearchResults = { creatives: [], campaigns: [], applications: [] };
 
+export const OPEN_SEARCH_EVENT = "cmp:open-search";
+
 export function GlobalSearch() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -41,8 +43,14 @@ export function GlobalSearch() {
         setOpen((v) => !v);
       }
     };
+    // The mobile bottom bar opens the search through this event.
+    const onOpen = () => setOpen(true);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener(OPEN_SEARCH_EVENT, onOpen);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener(OPEN_SEARCH_EVENT, onOpen);
+    };
   }, []);
 
   useEffect(() => {
@@ -81,7 +89,7 @@ export function GlobalSearch() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex h-8 w-full max-w-sm items-center gap-2 rounded-lg border bg-muted/40 px-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted"
+        className="flex h-8 w-full min-w-0 max-w-sm items-center gap-2 rounded-lg border bg-muted/40 px-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted"
       >
         <Search className="size-4" />
         <span className="truncate">Search creatives, campaigns…</span>

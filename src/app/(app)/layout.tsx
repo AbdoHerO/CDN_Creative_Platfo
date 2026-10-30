@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
+import { MobileNav } from "@/components/layout/mobile-nav";
 import { TopBar } from "@/components/layout/top-bar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { requireUser } from "@/lib/auth/current-user";
@@ -37,8 +38,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           canUpload={can(user.role, "creative.upload")}
           initialUnread={unreadCount}
         />
-        <div className="flex-1 px-4 pb-12 pt-6 sm:px-6 lg:px-8">{children}</div>
+        {/* Bottom padding leaves room for the mobile bottom bar. */}
+        <div className="flex-1 px-3 pb-28 pt-4 sm:px-6 sm:pt-6 md:pb-12 lg:px-8">{children}</div>
       </SidebarInset>
+      <MobileNav canUpload={can(user.role, "creative.upload")} showQueue={user.role !== "VIEWER"} queueCount={queueCount} />
     </SidebarProvider>
   );
 }

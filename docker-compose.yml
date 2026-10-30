@@ -11,6 +11,19 @@ services:
     networks:
       - backend.prod
 
+  # Background jobs: ZIP imports, thumbnails, checksums, PDF page counts, deletions.
+  creative-hub-worker:
+    image: creative-hub-prod:latest
+    container_name: creative-hub-worker
+    restart: unless-stopped
+    command: ["npm", "run", "worker"]
+    env_file:
+      - ${ENV_FILE:-.env.prod}
+    depends_on:
+      - creative-hub-prod
+    networks:
+      - backend.prod
+
 networks:
   backend.prod:
     external: true

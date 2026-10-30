@@ -2,36 +2,52 @@
 
 import { BookOpen, FileAudio, FileText, ImageIcon, Loader2, Play, Sparkles, VolumeX } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BadgeChips } from "@/components/badges/badge-chip";
 import { StatusBadge } from "@/components/creatives/status-badge";
 import { formatBytes, formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { LibraryItem } from "@/server/queries/library";
+import { ReelFeed } from "./reel-feed";
 
 /** Seconds of the clip played (and looped) while hovering a card. */
 const HOVER_SECONDS = 6;
 /** Short delay so sweeping the mouse across the grid does not start every video. */
 const HOVER_DELAY_MS = 150;
+/** Phones open the full-screen feed instead of the details page. */
+const FEED_QUERY = "(max-width: 767px)";
+
+export type ReelShape = "portrait" | "landscape";
+
+const GRID: Record<ReelShape, string> = {
+  portrait: "grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5 min-[1800px]:grid-cols-6",
+  landscape: "grid-cols-1 gap-3 min-[480px]:grid-cols-2 sm:gap-4 lg:grid-cols-3 2xl:grid-cols-4",
+};
 
 /**
- * Reels-style library grid: tall cards, the creative fitted on a blurred
- * backdrop, details over a gradient, and a muted preview on hover (the lite
- * version when there is one).
+ * Reels-style library grid: cards with the creative fitted on a blurred
+ * backdrop, details over a gradient and a muted preview on hover (the lite
+ * version when there is one). Tall 9:16 cards for videos, 4:3 for banners and
+ * PDFs. On phones a tap opens a full-screen, swipeable feed.
  */
-export function ReelGrid({ items }: { items: LibraryItem[] }) {
+export function ReelGrid({ items, shape = "portrait" }: { items: LibraryItem[]; shape?: ReelShape }) {
+  const [feedIndex, setFeedIndex] = useState<number | null>(null);
+  const closeFeed = useCallback(() => setFeedIndex(null), []);
   return (
-    <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5 min-[1800px]:grid-cols-6" data-testid="reel-grid">
-      {items.map((item) => (
-        <li key={item.fileId}>
-          <ReelCard item={item} />
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className={cn("grid", GRID[shape])} data-testid="reel-grid">
+        {items.map((item, i) => (
+          <li key={item.fileId}>
+            <ReelCard item={item} shape={shape} onOpenFeed={() => setFeedIndex(i)} />
+          </li>
+        ))}
+      </ul>
+      {feedIndex !== null && <ReelFeed items={items} startIndex={feedIndex} onClose={closeFeed} />}
+    </>
   );
 }
 
-function ReelCard({ item }: { item: LibraryItem }) {
+function ReelCard({ item, shape, onOpenFeed }: { item: LibraryItem; shape: ReelShape; onOpenFeed: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [active, setActive] = useState(false);
@@ -41,7 +57,8 @@ function ReelCard({ item }: { item: LibraryItem }) {
   const href = item.versionType === "PREVIEW" ? `/creatives/${item.creativeId}?file=${item.fileId}` : `/creatives/${item.creativeId}`;
 
   const start = () => {
-    if (!canPreview) return;
+    // Touch screens fire mouse events on tap: hover previews are for real pointers only.
+    if (!canPreview || !window.matchMedia("(hover: hover)").matches) return;
     timer.current = setTimeout(() => setActive(true), HOVER_DELAY_MS);
   };
   const stop = () => {
@@ -63,9 +80,12 @@ function ReelCard({ item }: { item: LibraryItem }) {
     v.play().catch(() => setPlaying(false));
   }, [active]);
 
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
 
   const onTime = () => {
     const v = videoRef.current;
@@ -75,6 +95,12 @@ function ReelCard({ item }: { item: LibraryItem }) {
     setProgress(Math.min(1, v.currentTime / limit));
   };
 
+  const onClick = (e: React.MouseEvent) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || !window.matchMedia(FEED_QUERY).matches) return;
+    e.preventDefault();
+    onOpenFeed();
+  };
+
   const duration = item.mediaType === "VIDEO" ? formatDuration(item.durationSeconds) : null;
   const pages = item.mediaType === "DOCUMENT" && item.pageCount ? `${item.pageCount} page${item.pageCount === 1 ? "" : "s"}` : null;
   const Fallback = item.mediaType === "AUDIO" ? FileAudio : item.mediaType === "DOCUMENT" ? FileText : ImageIcon;
@@ -82,11 +108,15 @@ function ReelCard({ item }: { item: LibraryItem }) {
   return (
     <Link
       href={href}
+      onClick={onClick}
       onMouseEnter={start}
       onMouseLeave={stop}
       onFocus={start}
       onBlur={stop}
-      className="group relative block aspect-[9/16] overflow-hidden rounded-2xl bg-neutral-950 shadow-sm ring-1 ring-black/5 outline-none transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/20 focus-visible:ring-2 focus-visible:ring-primary dark:ring-white/10"
+      className={cn(
+        "group relative block overflow-hidden rounded-xl bg-neutral-950 shadow-sm ring-1 ring-black/5 outline-none transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/20 focus-visible:ring-2 focus-visible:ring-primary active:scale-[0.98] sm:rounded-2xl dark:ring-white/10",
+        shape === "portrait" ? "aspect-[9/16]" : "aspect-[4/3]",
+      )}
       aria-label={`${item.name}, ${item.application.name}`}
       data-testid="reel-card"
     >
@@ -103,7 +133,7 @@ function ReelCard({ item }: { item: LibraryItem }) {
           />
         </>
       ) : (
-        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-neutral-800 to-neutral-950 text-white/50">
+        <div className="absolute inset-0 flex items-center justify-center bg-linear-to-br from-neutral-800 to-neutral-950 text-white/50">
           {item.processingStatus === "PENDING" || item.processingStatus === "PROCESSING" ? (
             <Loader2 className="size-7 animate-spin" />
           ) : (
@@ -126,9 +156,9 @@ function ReelCard({ item }: { item: LibraryItem }) {
       )}
 
       {/* Top: platform and status */}
-      <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 bg-gradient-to-b from-black/55 to-transparent p-2.5 pb-8">
-        <span className="flex min-w-0 items-center gap-1.5 rounded-full bg-black/45 py-0.5 pl-1 pr-2 text-[11px] font-medium text-white backdrop-blur-md">
-          <span className="size-3.5 shrink-0 rounded-full ring-2 ring-white/20" style={{ backgroundColor: item.application.brandColor }} />
+      <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-1.5 bg-linear-to-b from-black/55 to-transparent p-2 pb-8 sm:p-2.5">
+        <span className="flex min-w-0 items-center gap-1.5 rounded-full bg-black/45 py-0.5 pl-1 pr-2 text-[10px] font-medium text-white backdrop-blur-md sm:text-[11px]">
+          <span className="size-3 shrink-0 rounded-full ring-2 ring-white/20 sm:size-3.5" style={{ backgroundColor: item.application.brandColor }} />
           <span className="truncate">{item.application.name}</span>
         </span>
         <StatusBadge status={item.status} className="shrink-0 border-0 shadow-xs" />
@@ -138,7 +168,7 @@ function ReelCard({ item }: { item: LibraryItem }) {
       {item.mediaType === "VIDEO" && !playing && (
         <span
           className={cn(
-            "absolute left-1/2 top-1/2 flex size-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 text-white ring-1 ring-white/25 backdrop-blur-md transition-all duration-300",
+            "absolute left-1/2 top-1/2 flex size-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 text-white ring-1 ring-white/25 backdrop-blur-md transition-all duration-300 sm:size-12",
             active ? "scale-90 opacity-0" : "opacity-0 group-hover:opacity-100",
           )}
         >
@@ -154,9 +184,9 @@ function ReelCard({ item }: { item: LibraryItem }) {
       )}
 
       {/* Bottom: details */}
-      <div className="absolute inset-x-0 bottom-0 space-y-2 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-3 pt-14 text-white">
-        <BadgeChips badges={item.badges} solid max={3} />
-        <p className="line-clamp-2 text-sm font-semibold leading-snug drop-shadow" title={item.name}>
+      <div className="absolute inset-x-0 bottom-0 space-y-1.5 bg-linear-to-t from-black/90 via-black/60 to-transparent p-2.5 pt-12 text-white sm:space-y-2 sm:p-3 sm:pt-14">
+        <BadgeChips badges={item.badges} solid max={shape === "portrait" ? 2 : 3} />
+        <p className="line-clamp-2 text-[13px] font-semibold leading-snug drop-shadow sm:text-sm" title={item.name}>
           {item.name}
         </p>
         <div className="flex items-center justify-between gap-2 text-[11px] text-white/75">
@@ -164,8 +194,8 @@ function ReelCard({ item }: { item: LibraryItem }) {
             {duration && duration !== "—" && <span className="tabular rounded bg-white/15 px-1.5 py-px font-medium text-white">{duration}</span>}
             {pages && <span className="tabular rounded bg-white/15 px-1.5 py-px font-medium text-white">{pages}</span>}
             <span className="uppercase">{item.extension}</span>
-            <span>·</span>
-            <span>{formatBytes(item.sizeBytes)}</span>
+            <span className="hidden sm:inline">·</span>
+            <span className="hidden sm:inline">{formatBytes(item.sizeBytes)}</span>
           </span>
           {item.extension === "pdf" ? (
             <span className="shrink-0 rounded bg-rose-500 px-1.5 py-px text-[10px] font-bold tracking-wide text-white">PDF</span>

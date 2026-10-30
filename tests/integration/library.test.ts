@@ -59,8 +59,9 @@ async function make(opts: {
   });
 }
 
+// These scenarios cover every content type; the library itself opens on videos.
 const run = (params: Record<string, string>, showPreviews = false, user = world.users.admin) =>
-  queryLibrary(user, parseLibraryParams(params), { pageSize: 24, showPreviews });
+  queryLibrary(user, parseLibraryParams({ kind: "all", ...params }), { pageSize: 24, showPreviews });
 
 describe("creative library", () => {
   beforeEach(async () => {
@@ -111,9 +112,9 @@ describe("creative library", () => {
   });
 
   it("paginates", async () => {
-    const page = await queryLibrary(world.users.admin, parseLibraryParams({ size: "24" }), { pageSize: 24, showPreviews: true });
+    const page = await queryLibrary(world.users.admin, parseLibraryParams({ kind: "all", size: "24" }), { pageSize: 24, showPreviews: true });
     expect(page.total).toBe(5);
-    const p2 = await queryLibrary(world.users.admin, { ...parseLibraryParams({ page: "2" }), size: undefined }, { pageSize: 2, showPreviews: true });
+    const p2 = await queryLibrary(world.users.admin, { ...parseLibraryParams({ kind: "all", page: "2" }), size: undefined }, { pageSize: 2, showPreviews: true });
     expect(p2.items).toHaveLength(2);
     expect(p2.page).toBe(2);
   });
@@ -154,5 +155,23 @@ describe("library banner filters", () => {
     expect(counts.apps).toEqual({ [world.apps.alpha]: 2, [world.apps.beta]: 1 }); // platform counts ignore the selected platform
     expect(counts.review).toEqual({ all: 2, approved: 1, waiting: 1, declined: 0 });
     expect(counts.lite).toEqual({ all: 2, with: 1, without: 1 });
+  });
+});
+
+describe("content tabs", () => {
+  it("opens on videos and switches to banners, PDFs or everything", async () => {
+    await make({ name: "Spot", files: [{ name: "spot.mp4", type: "FULL", size: 10 }] });
+    await make({ name: "Hero banner", mediaType: "IMAGE", category: "BANNER", files: [{ name: "hero.png", type: "FULL", size: 10 }] });
+    await make({ name: "User guide", mediaType: "DOCUMENT", category: "DOCUMENT", files: [{ name: "guide.pdf", type: "FULL", size: 10 }] });
+    const names = async (q: Record<string, string>) =>
+      (await queryLibrary(world.users.admin, parseLibraryParams(q), { pageSize: 50, showPreviews: false })).items.map((i) => i.name).sort();
+    expect(parseLibraryParams({}).kind).toBe("video");
+    expect(await names({})).toEqual(["Spot"]);
+    expect(await names({ kind: "banner" })).toEqual(["Hero banner"]);
+    expect(await names({ kind: "pdf" })).toEqual(["User guide"]);
+    expect(await names({ kind: "all" })).toEqual(["Hero banner", "Spot", "User guide"]);
+    expect(await names({ type: "IMAGE" })).toEqual(["Hero banner"]); // an explicit type still wins
+    const counts = await libraryCounts(world.users.admin, parseLibraryParams({}));
+    expect(counts.kinds).toEqual({ video: 1, banner: 1, pdf: 1, all: 3 });
   });
 });

@@ -190,7 +190,7 @@ export default async function CreativePage({ params, searchParams }: PageProps<"
                     {selected.uploadedBy?.name ?? "Unknown"}
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {creative.permissions.canEdit && (
                     <ReplaceFileDialog
                       key={selected.id}

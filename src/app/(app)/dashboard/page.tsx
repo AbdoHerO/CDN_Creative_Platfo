@@ -64,9 +64,9 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
 
       <section aria-label="Key figures" className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         <StatCard label="Total creatives" value={t.total} icon={Layers} href="/library" />
-        <StatCard label="Videos" value={t.videos} icon={FileVideo} href="/library?type=VIDEO" />
-        <StatCard label="Images" value={t.images} icon={ImageIcon} href="/library?type=IMAGE" />
-        <StatCard label="Banners" value={t.banners} icon={PanelsTopLeft} href="/library?category=BANNER" />
+        <StatCard label="Videos" value={t.videos} icon={FileVideo} href="/library" />
+        <StatCard label="Images" value={t.images} icon={ImageIcon} href="/library?kind=banner" />
+        <StatCard label="Banners" value={t.banners} icon={PanelsTopLeft} href="/library?kind=banner&category=BANNER" />
         <StatCard label="Approved" value={t.APPROVED} icon={CheckCircle2} tone="emerald" href="/approved" />
         {user.role !== "VIEWER" && (
           <>

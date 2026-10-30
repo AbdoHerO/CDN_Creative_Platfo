@@ -25,6 +25,12 @@ import { creativeVisibilityWhere } from "@/lib/visibility";
  * filtering, sorting by file size and pagination in a single indexed query.
  */
 
+export const KIND_MEDIA_TYPE = { video: "VIDEO", banner: "IMAGE", pdf: "DOCUMENT", all: undefined } as const satisfies Record<
+  string,
+  MediaType | undefined
+>;
+export type LibraryKind = keyof typeof KIND_MEDIA_TYPE;
+
 const enumOrUndefined = <T extends Record<string, string>>(e: T) =>
   z
     .string()
@@ -51,6 +57,11 @@ export const libraryParamsSchema = z.object({
   category: enumOrUndefined(CreativeCategory),
   status: enumOrUndefined(CreativeStatus),
   type: enumOrUndefined(MediaType),
+  /** Content tab of the library banner. Videos unless asked otherwise. */
+  kind: z
+    .string()
+    .optional()
+    .transform((v): LibraryKind => (v && v in KIND_MEDIA_TYPE ? (v as LibraryKind) : "video")),
   format: z
     .string()
     .optional()
@@ -93,6 +104,17 @@ export const libraryParamsSchema = z.object({
 });
 
 export type LibraryParams = z.output<typeof libraryParamsSchema>;
+
+/** Media type behind each content tab (an explicit `type` parameter wins). */
+export function effectiveMediaType(p: Partial<LibraryParams>): MediaType | undefined {
+  return p.type ?? (p.kind ? KIND_MEDIA_TYPE[p.kind] : undefined);
+}
+
+/** The content tab to highlight for these parameters. */
+export function activeKind(p: Partial<LibraryParams>): LibraryKind {
+  if (!p.type) return p.kind ?? "video";
+  return (Object.entries(KIND_MEDIA_TYPE).find(([, t]) => t === p.type)?.[0] as LibraryKind | undefined) ?? "all";
+}
 
 export function parseLibraryParams(searchParams: Record<string, string | string[] | undefined>): LibraryParams {
   const flat: Record<string, string> = {};
@@ -202,6 +224,8 @@ export type LibraryItem = {
   hasPreview: boolean;
   /** Short muted clip played on hover: the lite version when there is one, else this file. */
   hoverVideoUrl: string | null;
+  /** Full-size picture for the mobile feed (images: browser-viewable original or display rendition). */
+  imageUrl: string | null;
 };
 
 export async function queryLibrary(
@@ -214,7 +238,7 @@ export async function queryLibrary(
     isCurrent: true,
     versionType: showPreviews ? { in: ["FULL", "PREVIEW"] } : "FULL",
     creative: buildCreativeWhere(user, params, opts.fixedStatus),
-    ...(params.type ? { mediaType: params.type } : {}),
+    ...(effectiveMediaType(params) ? { mediaType: effectiveMediaType(params) } : {}),
     ...(params.format ? { extension: params.format } : {}),
   };
   const pageSize = params.size ?? opts.pageSize;
@@ -241,6 +265,7 @@ export async function queryLibrary(
         pageCount: true,
         processingStatus: true,
         thumbnailKey: true,
+        displayKey: true,
         storageKey: true,
         mimeType: true,
         creative: {
@@ -266,6 +291,10 @@ export async function queryLibrary(
   const items: LibraryItem[] = await Promise.all(
     rows.map(async (r) => ({
       ...(await hoverVideo(r)),
+      imageUrl:
+        r.mediaType === "IMAGE"
+          ? await trySignedGetUrl(r.displayKey ?? (fileTypeForName(r.originalFilename)?.browserPreviewable ? r.storageKey : null), { stable: true })
+          : null,
       fileId: r.id,
       creativeId: r.creative.id,
       name: r.creative.name,
@@ -337,17 +366,33 @@ export async function libraryCounts(user: SessionUser, p: LibraryParams, fixedSt
       buildCreativeWhere(user, q, fixedStatus),
       {
         files: {
-          some: { isCurrent: true, versionType: "FULL", ...(q.type ? { mediaType: q.type } : {}), ...(q.format ? { extension: q.format } : {}) },
+          some: {
+            isCurrent: true,
+            versionType: "FULL",
+            ...(effectiveMediaType(q) ? { mediaType: effectiveMediaType(q) } : {}),
+            ...(q.format ? { extension: q.format } : {}),
+          },
         },
       },
     ],
   });
-  const [byApp, byStatus, withLite, withoutLite] = await Promise.all([
+  const [byApp, byStatus, withLite, withoutLite, byKind] = await Promise.all([
     prisma.creative.groupBy({ by: ["applicationId"], where: listed({ ...p, app: undefined, campaign: undefined }), _count: { _all: true } }),
     prisma.creative.groupBy({ by: ["status"], where: listed({ ...p, review: undefined }), _count: { _all: true } }),
     prisma.creative.count({ where: listed({ ...p, lite: "with" }) }),
     prisma.creative.count({ where: listed({ ...p, lite: "without" }) }),
+    prisma.creativeFile.groupBy({
+      by: ["mediaType"],
+      where: {
+        isCurrent: true,
+        versionType: "FULL",
+        ...(p.format ? { extension: p.format } : {}),
+        creative: buildCreativeWhere(user, p, fixedStatus),
+      },
+      _count: { _all: true },
+    }),
   ]);
+  const kindCount = (t: MediaType) => byKind.find((k) => k.mediaType === t)?._count._all ?? 0;
   const status = (list: CreativeStatus[]) => byStatus.filter((s) => list.includes(s.status)).reduce((n, s) => n + s._count._all, 0);
   return {
     apps: Object.fromEntries(byApp.map((a) => [a.applicationId, a._count._all])) as Record<string, number>,
@@ -359,6 +404,12 @@ export async function libraryCounts(user: SessionUser, p: LibraryParams, fixedSt
       declined: status(["DECLINED"]),
     },
     lite: { all: withLite + withoutLite, with: withLite, without: withoutLite },
+    kinds: {
+      video: kindCount("VIDEO"),
+      banner: kindCount("IMAGE"),
+      pdf: kindCount("DOCUMENT"),
+      all: byKind.reduce((n, k) => n + k._count._all, 0),
+    } satisfies Record<LibraryKind, number>,
   };
 }
 
