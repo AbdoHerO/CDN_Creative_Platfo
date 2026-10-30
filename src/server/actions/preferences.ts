@@ -20,3 +20,18 @@ export async function updatePreferencesAction(input: z.input<typeof schema>) {
     return true;
   });
 }
+
+const profileSchema = z.object({
+  name: z.string().trim().min(2, "Name is required.").max(100),
+  jobTitle: z.string().trim().max(100).nullish(),
+});
+
+export async function updateProfileAction(input: z.input<typeof profileSchema>) {
+  return runAction(async () => {
+    const user = await requireActionUser();
+    const data = parseInput(profileSchema, input);
+    await prisma.user.update({ where: { id: user.id }, data: { name: data.name, jobTitle: data.jobTitle || null } });
+    revalidatePath("/", "layout");
+    return true;
+  }, "Profile updated.");
+}
