@@ -1,0 +1,756 @@
+// Creative Management Platform — database schema
+//
+// Design notes
+// - Media binaries are NEVER stored here. Originals and derived assets (thumbnails,
+//   display renditions) live in Cloudflare R2; this schema only stores their keys and
+//   metadata.
+// - A Creative is the logical asset. Each uploaded file is a CreativeFile ("version")
+//   attached to exactly one Creative, so full + preview versions of the same video
+//   share one Creative record instead of duplicating its metadata.
+// - Sizes are BigInt because single video masters can exceed 2 GiB.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Identity & access
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum RoleKey {
+  ADMIN
+  MANAGER
+  CREATOR
+  VIEWER
+}
+
+/// Role metadata. The permission matrix itself lives in code (src/lib/permissions.ts)
+/// so it is versioned, reviewed and enforced identically on every server.
+model Role {
+  id          String   @id @default(cuid())
+  key         RoleKey  @unique
+  name        String
+  description String?
+  users       User[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum LibraryView {
+  GRID
+  LIST
+}
+
+model User {
+  id                   String      @id @default(cuid())
+  /// Always stored lower-cased.
+  email                String      @unique
+  name                 String
+  jobTitle             String?
+  passwordHash         String
+  roleId               String
+  role                 Role        @relation(fields: [roleId], references: [id])
+  status               UserStatus  @default(ACTIVE)
+  mustChangePassword   Boolean     @default(false)
+  /// Global "Show preview versions" library filter (OFF by default).
+  showPreviewVersions  Boolean     @default(false)
+  libraryView          LibraryView @default(GRID)
+  /// When true the user only sees the applications listed in applicationAccess.
+  restrictApplications Boolean     @default(false)
+  lastLoginAt          DateTime?
+  passwordChangedAt    DateTime?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  applicationAccess UserApplicationAccess[]
+  sessions          Session[]
+  createdCreatives  Creative[]              @relation("CreativeCreatedBy")
+  uploadedFiles     CreativeFile[]          @relation("FileUploadedBy")
+  validations       Validation[]
+  activities        ActivityLog[]
+  notifications     Notification[]          @relation("NotificationRecipient")
+  sentNotifications Notification[]          @relation("NotificationActor")
+  uploadSessions    UploadSession[]
+  importBatches     ImportBatch[]
+  createdCampaigns  Campaign[]
+
+  @@index([roleId])
+  @@index([status])
+}
+
+model UserApplicationAccess {
+  userId        String
+  applicationId String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now())
+
+  @@id([userId, applicationId])
+  @@index([applicationId])
+}
+
+/// Server-side session. `id` is the SHA-256 of the random token stored in the
+/// httpOnly cookie, so a database leak does not leak usable session tokens.
+model Session {
+  id         String   @id
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  lastSeenAt DateTime @default(now())
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Fixed-window rate limit counters shared by every app instance.
+model RateLimit {
+  key         String   @id
+  count       Int      @default(0)
+  windowStart DateTime @default(now())
+
+  @@index([windowStart])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Applications & campaigns
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ApplicationStatus {
+  ACTIVE
+  DISABLED
+}
+
+model Application {
+  id           String            @id @default(cuid())
+  name         String            @unique
+  slug         String            @unique
+  description  String?
+  /// Hex colour, e.g. #2563EB
+  brandColor   String            @default("#4F46E5")
+  logoKey      String?
+  logoMimeType String?
+  status       ApplicationStatus @default(ACTIVE)
+  sortOrder    Int               @default(0)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  creatives   Creative[]
+  campaigns   Campaign[]
+  access      UserApplicationAccess[]
+  activities  ActivityLog[]
+  importBatch ImportBatch[]
+
+  @@index([status, sortOrder])
+}
+
+enum CampaignStatus {
+  PLANNED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+model Campaign {
+  id            String         @id @default(cuid())
+  name          String
+  slug          String
+  applicationId String
+  application   Application    @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  description   String?
+  startDate     DateTime?      @db.Date
+  endDate       DateTime?      @db.Date
+  status        CampaignStatus @default(PLANNED)
+  createdById   String?
+  createdBy     User?          @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  creatives    Creative[]
+  tags         CampaignTag[]
+  importBatch  ImportBatch[]
+
+  @@unique([applicationId, slug])
+  @@index([applicationId, status])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Creatives & versions
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum MediaType {
+  VIDEO
+  IMAGE
+  DOCUMENT
+  AUDIO
+  OTHER
+}
+
+enum CreativeCategory {
+  MARKETING_VIDEO
+  ADVERTISING_VIDEO
+  SOCIAL_MEDIA_POST
+  BANNER
+  PROMOTIONAL_IMAGE
+  CAMPAIGN_VISUAL
+  OTHER
+}
+
+enum CreativeStatus {
+  DRAFT
+  PENDING
+  IN_REVIEW
+  APPROVED
+  DECLINED
+  ARCHIVED
+}
+
+enum Channel {
+  INSTAGRAM
+  FACEBOOK
+  LINKEDIN
+  TIKTOK
+  YOUTUBE
+  X
+  WHATSAPP
+  WEBSITE
+  EMAIL
+  DISPLAY_ADS
+  IN_APP
+  PRINT
+  OTHER
+}
+
+model Creative {
+  id                 String           @id @default(cuid())
+  name               String
+  description        String?
+  applicationId      String
+  application        Application      @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  campaignId         String?
+  campaign           Campaign?        @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  category           CreativeCategory @default(OTHER)
+  /// Derived from the current full version (or preview when no full exists yet).
+  mediaType          MediaType        @default(OTHER)
+  status             CreativeStatus   @default(DRAFT)
+  channels           Channel[]
+  /// Lower-cased free keywords used by search.
+  keywords           String[]
+  /// Normalised base filename (without extension and `_preview` suffix) used to match
+  /// full and preview versions. Matching is always scoped to the application and
+  /// always confirmed through the database relation, never by filename alone.
+  matchKey           String
+  /// Status to restore when an archived creative is un-archived.
+  archivedFromStatus CreativeStatus?
+  createdById        String?
+  createdBy          User?            @relation("CreativeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  submittedAt        DateTime?
+  approvedAt         DateTime?
+  declinedAt         DateTime?
+  archivedAt         DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  files          CreativeFile[]
+  tags           CreativeTag[]
+  validations    Validation[]
+  activities     ActivityLog[]
+  notifications  Notification[]
+  uploadSessions UploadSession[]
+
+  @@index([applicationId, status])
+  @@index([applicationId, matchKey])
+  @@index([campaignId])
+  @@index([status, updatedAt])
+  @@index([createdById])
+  @@index([createdAt])
+  @@index([category])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Creative_name_trgm_idx")
+}
+
+enum VersionType {
+  FULL
+  PREVIEW
+  VARIANT
+}
+
+enum ProcessingStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum IntegrityStatus {
+  PENDING
+  VERIFIED
+  MISMATCH
+  UNVERIFIED
+}
+
+/// One stored file (a version) of a creative. The original object in R2 is never
+/// modified; thumbnails/display renditions are separate derived objects.
+model CreativeFile {
+  id               String           @id @default(cuid())
+  creativeId       String
+  creative         Creative         @relation(fields: [creativeId], references: [id], onDelete: Cascade)
+  versionType      VersionType
+  /// 1-based, sequential per (creative, versionType).
+  versionNumber    Int
+  /// The latest/selected version of its type. Maintained transactionally.
+  isCurrent        Boolean          @default(true)
+  /// Optional label, mainly for variants (e.g. "9:16 Story").
+  label            String?
+  originalFilename String
+  storageKey       String           @unique
+  sizeBytes        BigInt
+  mimeType         String
+  extension        String
+  mediaType        MediaType
+  width            Int?
+  height           Int?
+  durationSeconds  Float?
+  frameRate        Float?
+  videoCodec       String?
+  audioCodec       String?
+  bitrate          Int?
+  pageCount        Int?
+  /// SHA-256 computed in the browser before/while uploading.
+  checksumSha256   String?
+  /// SHA-256 recomputed by the worker from the stored object.
+  verifiedSha256   String?
+  integrityStatus  IntegrityStatus  @default(PENDING)
+  processingStatus ProcessingStatus @default(PENDING)
+  processingError  String?
+  thumbnailKey     String?
+  thumbnailBytes   Int?
+  /// Browser-friendly rendition for formats browsers cannot display (TIFF, HEIC…).
+  displayKey       String?
+  displayBytes     Int?
+  metadata         Json?
+  uploadedById     String?
+  uploadedBy       User?            @relation("FileUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  processedAt      DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@unique([creativeId, versionType, versionNumber])
+  @@index([creativeId, versionType, isCurrent])
+  @@index([versionType, isCurrent])
+  @@index([sizeBytes])
+  @@index([processingStatus])
+  @@index([originalFilename(ops: raw("gin_trgm_ops"))], type: Gin, map: "CreativeFile_originalFilename_trgm_idx")
+}
+
+model Tag {
+  id        String        @id @default(cuid())
+  name      String        @unique
+  slug      String        @unique
+  createdAt DateTime      @default(now())
+  creatives CreativeTag[]
+  campaigns CampaignTag[]
+}
+
+model CreativeTag {
+  creativeId String
+  tagId      String
+  creative   Creative @relation(fields: [creativeId], references: [id], onDelete: Cascade)
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@id([creativeId, tagId])
+  @@index([tagId])
+}
+
+model CampaignTag {
+  campaignId String
+  tagId      String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@id([campaignId, tagId])
+  @@index([tagId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Validation workflow
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ValidationAction {
+  SUBMITTED
+  REVIEW_STARTED
+  APPROVED
+  DECLINED
+  CHANGES_REQUESTED
+  WITHDRAWN
+  REOPENED
+  ARCHIVED
+  RESTORED
+  RESET_NEW_VERSION
+}
+
+/// Immutable record of every status transition.
+model Validation {
+  id         String           @id @default(cuid())
+  creativeId String
+  creative   Creative         @relation(fields: [creativeId], references: [id], onDelete: Cascade)
+  action     ValidationAction
+  fromStatus CreativeStatus
+  toStatus   CreativeStatus
+  reviewerId String?
+  reviewer   User?            @relation(fields: [reviewerId], references: [id], onDelete: SetNull)
+  comment    String?
+  /// Required when declining.
+  reason     String?
+  /// The full version that was current when the decision was made.
+  fileId     String?
+  createdAt  DateTime         @default(now())
+
+  @@index([creativeId, createdAt])
+  @@index([reviewerId])
+  @@index([action, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Activity & notifications
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ActivityAction {
+  AUTH_LOGIN
+  AUTH_LOGOUT
+  AUTH_LOGIN_FAILED
+  PASSWORD_CHANGED
+  CREATIVE_CREATED
+  CREATIVE_UPDATED
+  CREATIVE_DELETED
+  CREATIVE_STATUS_CHANGED
+  CREATIVE_APPROVED
+  CREATIVE_DECLINED
+  CREATIVE_ARCHIVED
+  CREATIVE_RESTORED
+  FILE_UPLOADED
+  VERSION_UPLOADED
+  FILE_DELETED
+  FILE_MOVED
+  FILE_SET_CURRENT
+  FILE_DOWNLOADED
+  FILE_INTEGRITY_FAILED
+  APPLICATION_CREATED
+  APPLICATION_UPDATED
+  APPLICATION_STATUS_CHANGED
+  CAMPAIGN_CREATED
+  CAMPAIGN_UPDATED
+  CAMPAIGN_DELETED
+  USER_CREATED
+  USER_UPDATED
+  USER_ROLE_CHANGED
+  USER_DISABLED
+  USER_ENABLED
+  USER_PASSWORD_RESET
+  IMPORT_STARTED
+  IMPORT_COMPLETED
+  IMPORT_FAILED
+  SETTINGS_UPDATED
+  STORAGE_RECONCILED
+}
+
+enum EntityType {
+  USER
+  CREATIVE
+  FILE
+  APPLICATION
+  CAMPAIGN
+  IMPORT
+  SETTINGS
+  STORAGE
+}
+
+model ActivityLog {
+  id            String         @id @default(cuid())
+  actorId       String?
+  actor         User?          @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action        ActivityAction
+  entityType    EntityType
+  entityId      String?
+  creativeId    String?
+  creative      Creative?      @relation(fields: [creativeId], references: [id], onDelete: SetNull)
+  applicationId String?
+  application   Application?   @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  /// Human readable summary, kept even if the referenced entity is deleted.
+  summary       String
+  metadata      Json?
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime       @default(now())
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([creativeId, createdAt])
+  @@index([action, createdAt])
+  @@index([entityType, entityId])
+  @@index([applicationId, createdAt])
+}
+
+enum NotificationType {
+  CREATIVE_SUBMITTED
+  CREATIVE_APPROVED
+  CREATIVE_DECLINED
+  CHANGES_REQUESTED
+  PROCESSING_FAILED
+  INTEGRITY_FAILED
+  IMPORT_READY
+  IMPORT_COMPLETED
+  IMPORT_FAILED
+  SYSTEM
+}
+
+model Notification {
+  id         String           @id @default(cuid())
+  userId     String
+  user       User             @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  actorId    String?
+  actor      User?            @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  type       NotificationType
+  title      String
+  body       String?
+  link       String?
+  creativeId String?
+  creative   Creative?        @relation(fields: [creativeId], references: [id], onDelete: Cascade)
+  readAt     DateTime?
+  createdAt  DateTime         @default(now())
+
+  @@index([userId, readAt, createdAt])
+  @@index([userId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Uploads, imports & background jobs
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum UploadPurpose {
+  CREATIVE_FILE
+  ZIP_IMPORT
+}
+
+enum UploadMode {
+  SINGLE
+  MULTIPART
+}
+
+enum UploadStatus {
+  UPLOADING
+  COMPLETED
+  ABORTED
+  FAILED
+  EXPIRED
+}
+
+/// Tracks a direct-to-R2 upload so it can be resumed, cancelled, verified and
+/// cleaned up. The CreativeFile id is reserved up-front so the storage key is stable.
+model UploadSession {
+  id             String        @id @default(cuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose        UploadPurpose
+  mode           UploadMode
+  status         UploadStatus  @default(UPLOADING)
+  storageKey     String        @unique
+  /// R2 multipart upload id (MULTIPART mode only).
+  uploadId       String?
+  filename       String
+  sizeBytes      BigInt
+  mimeType       String
+  partSize       Int?
+  partCount      Int?
+  /// name + size + lastModified, used to offer resuming the same local file.
+  fingerprint    String
+  checksumSha256 String?
+  creativeId     String?
+  creative       Creative?     @relation(fields: [creativeId], references: [id], onDelete: Cascade)
+  fileId         String?       @unique
+  versionType    VersionType?
+  label          String?
+  importBatchId  String?       @unique
+  importBatch    ImportBatch?  @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  errorMessage   String?
+  expiresAt      DateTime
+  completedAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([userId, status])
+  @@index([userId, fingerprint])
+  @@index([status, expiresAt])
+}
+
+enum ImportStatus {
+  UPLOADING
+  ANALYZING
+  READY_FOR_REVIEW
+  IMPORTING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model ImportBatch {
+  id               String         @id @default(cuid())
+  createdById      String?
+  createdBy        User?          @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  /// Default application/campaign chosen by the user before analysis.
+  applicationId    String
+  application      Application    @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  campaignId       String?
+  campaign         Campaign?      @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  archiveFilename  String
+  archiveKey       String?
+  archiveSizeBytes BigInt
+  /// Keep the original archive in R2 as an import record.
+  keepArchive      Boolean        @default(false)
+  status           ImportStatus   @default(UPLOADING)
+  errorMessage     String?
+  totalEntries     Int            @default(0)
+  importedCount    Int            @default(0)
+  skippedCount     Int            @default(0)
+  failedCount      Int            @default(0)
+  totalBytes       BigInt         @default(0)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  completedAt      DateTime?
+
+  items         ImportItem[]
+  uploadSession UploadSession?
+
+  @@index([createdById, createdAt])
+  @@index([status])
+}
+
+enum ImportItemStatus {
+  PENDING
+  REJECTED
+  SKIPPED
+  IMPORTING
+  IMPORTED
+  FAILED
+}
+
+model ImportItem {
+  id                     String           @id @default(cuid())
+  batchId                String
+  batch                  ImportBatch      @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  /// Normalised, validated path inside the archive.
+  entryPath              String
+  filename               String
+  sizeBytes              BigInt
+  compressedBytes        BigInt
+  mimeType               String
+  extension              String
+  mediaType              MediaType
+  versionType            VersionType
+  matchKey               String
+  /// Items sharing a groupKey become versions of the same new creative.
+  groupKey               String
+  creativeName           String
+  category               CreativeCategory
+  suggestedApplicationId String?
+  suggestedCampaignId    String?
+  applicationId          String?
+  campaignId             String?
+  /// Existing creative to attach this file to (instead of creating a new one).
+  targetCreativeId       String?
+  include                Boolean          @default(true)
+  /// Ambiguous association detected during analysis; the user must decide.
+  needsReview            Boolean          @default(false)
+  /// Explanation of the suggested association (shown in the review step).
+  note                   String?
+  status                 ImportItemStatus @default(PENDING)
+  rejectReason           String?
+  errorMessage           String?
+  createdCreativeId      String?
+  createdFileId          String?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  @@index([batchId, status])
+}
+
+enum JobType {
+  PROCESS_FILE
+  DELETE_OBJECTS
+  ANALYZE_IMPORT
+  RUN_IMPORT
+  RECONCILE_STORAGE
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+/// Postgres-backed job queue consumed by the worker with FOR UPDATE SKIP LOCKED.
+model Job {
+  id          String    @id @default(cuid())
+  type        JobType
+  payload     Json
+  status      JobStatus @default(QUEUED)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  runAt       DateTime  @default(now())
+  lockedAt    DateTime?
+  lockedBy    String?
+  lastError   String?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, runAt])
+  @@index([type, status])
+}
+
+enum SnapshotStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+/// Result of reconciling database records with the actual objects in R2.
+model StorageSnapshot {
+  id             String         @id @default(cuid())
+  status         SnapshotStatus @default(RUNNING)
+  totalObjects   Int            @default(0)
+  totalBytes     BigInt         @default(0)
+  orphanObjects  Int            @default(0)
+  orphanBytes    BigInt         @default(0)
+  missingObjects Int            @default(0)
+  details        Json?
+  error          String?
+  requestedById  String?
+  createdAt      DateTime       @default(now())
+  completedAt    DateTime?
+
+  @@index([createdAt])
+}
+
+model SystemSetting {
+  key         String   @id
+  value       Json
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+}
