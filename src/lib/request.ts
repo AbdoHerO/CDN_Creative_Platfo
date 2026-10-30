@@ -10,7 +10,6 @@ export function requestMetaFromHeaders(headers: HeaderBag): RequestMeta {
   let ip: string | null = null;
   if (trustProxy) {
     ip =
-      headers.get("cf-connecting-ip") ??
       headers.get("x-real-ip") ??
       headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
       null;

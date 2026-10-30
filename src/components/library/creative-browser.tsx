@@ -7,9 +7,11 @@ import type { CreativeStatus } from "@/generated/prisma/enums";
 import type { SessionUser } from "@/lib/auth/session-core";
 import { can } from "@/lib/permissions";
 import { getSettings } from "@/lib/settings";
-import { libraryFacets, parseLibraryParams, queryLibrary } from "@/server/queries/library";
-import { CreativeGrid, CreativeList } from "./creative-items";
+import { libraryCounts, libraryFacets, parseLibraryParams, queryLibrary } from "@/server/queries/library";
+import { CreativeList } from "./creative-items";
 import { LibraryFilters } from "./library-filters";
+import { LibraryHero } from "./library-hero";
+import { ReelGrid } from "./reel-grid";
 
 type Fixed = { status?: CreativeStatus; app?: string; campaign?: string };
 
@@ -36,13 +38,17 @@ export async function CreativeBrowser({
   if (fixed.app) params.app = fixed.app;
   if (fixed.campaign) params.campaign = fixed.campaign;
   const settings = await getSettings();
-  const [result, facets] = await Promise.all([
+  const [result, facets, counts] = await Promise.all([
     queryLibrary(user, params, { fixedStatus: fixed.status, pageSize: settings.defaultPageSize }),
     libraryFacets(user, params.app),
+    libraryCounts(user, params, fixed.status),
   ]);
+  const showPlatforms = !fixed.app && facets.applications.length > 1;
+  // Viewers only ever see approved creatives, and status pages are fixed to one status.
+  const showReview = !fixed.status && user.role !== "VIEWER";
   const view = params.view ?? (user.libraryView === "LIST" ? "list" : "grid");
   const hasFilters = Boolean(
-    params.q || params.category || params.type || params.format || params.tag || params.uploader || params.from || params.to ||
+    params.q || params.category || params.type || params.format || params.tag || params.badge || params.review || params.lite || params.uploader || params.from || params.to ||
       (!fixed.status && params.status) || (!fixed.app && params.app) || (!fixed.campaign && params.campaign),
   );
 
@@ -55,6 +61,9 @@ export async function CreativeBrowser({
     type: params.type,
     format: params.format,
     tag: params.tag,
+    badge: params.badge,
+    review: params.review,
+    lite: params.lite,
     uploader: params.uploader,
     from: params.from,
     to: params.to,
@@ -65,7 +74,15 @@ export async function CreativeBrowser({
 
   return (
     <div className="space-y-5">
+      <LibraryHero
+        applications={facets.applications}
+        counts={counts}
+        values={{ app: params.app ?? "", review: params.review ?? "", lite: params.lite ?? "" }}
+        showPlatforms={showPlatforms}
+        showReview={showReview}
+      />
       <LibraryFilters
+        hideApplication={showPlatforms}
         basePath={basePath}
         facets={facets}
         fixed={{ status: !!fixed.status, app: !!fixed.app, campaign: !!fixed.campaign }}
@@ -78,6 +95,9 @@ export async function CreativeBrowser({
           type: params.type ?? "",
           format: params.format ?? "",
           tag: params.tag ?? "",
+          badge: params.badge ?? "",
+          review: params.review ?? "",
+          lite: params.lite ?? "",
           uploader: params.uploader ?? "",
           from: params.from ?? "",
           to: params.to ?? "",
@@ -107,7 +127,7 @@ export async function CreativeBrowser({
       ) : view === "list" ? (
         <CreativeList items={result.items} />
       ) : (
-        <CreativeGrid items={result.items} />
+        <ReelGrid items={result.items} />
       )}
 
       <UrlPagination basePath={basePath} params={linkParams} page={result.page} pageSize={result.pageSize} total={result.total} />

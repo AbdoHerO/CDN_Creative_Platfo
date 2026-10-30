@@ -5,7 +5,7 @@ import type { SessionUser } from "@/lib/auth/session-core";
 import { STATUS_ORDER } from "@/lib/constants";
 import { prisma } from "@/lib/db";
 import { can } from "@/lib/permissions";
-import { trySignedGetUrl } from "@/lib/storage/r2";
+import { trySignedGetUrl } from "@/lib/storage/s3";
 import { creativeVisibilityWhere } from "@/lib/visibility";
 
 /** Every dashboard figure comes from live, permission-scoped database queries. */

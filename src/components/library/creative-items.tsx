@@ -1,9 +1,10 @@
 import Link from "next/link";
+import { BadgeChips } from "@/components/badges/badge-chip";
 import { AppBadge } from "@/components/common/app-badge";
 import { MediaThumbnail } from "@/components/creatives/media-thumbnail";
 import { StatusBadge } from "@/components/creatives/status-badge";
 import { CATEGORY_LABELS } from "@/lib/constants";
-import { formatBytes, formatDate, formatDuration, formatResolution } from "@/lib/format";
+import { formatBytes, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { LibraryItem } from "@/server/queries/library";
 
@@ -30,77 +31,12 @@ export function VersionChips({ versions, className }: { versions: LibraryItem["v
 
 function PreviewLabel() {
   return (
-    <span className="rounded bg-foreground/85 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-background">PREVIEW</span>
-  );
-}
-
-export function CreativeGrid({ items }: { items: LibraryItem[] }) {
-  return (
-    <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 min-[1800px]:grid-cols-5">
-      {items.map((item) => {
-        const meta = item.mediaType === "VIDEO" ? formatDuration(item.durationSeconds) : formatResolution(item.width, item.height);
-        return (
-          <li key={item.fileId}>
-            <Link
-              href={hrefFor(item)}
-              className={cn(
-                "group flex h-full flex-col overflow-hidden rounded-xl border bg-card shadow-xs transition-all hover:-translate-y-px hover:border-foreground/15 hover:shadow-md",
-                item.versionType === "PREVIEW" && "border-dashed",
-              )}
-            >
-              <div className="relative">
-                <MediaThumbnail
-                  url={item.thumbnailUrl}
-                  mediaType={item.mediaType}
-                  processingStatus={item.processingStatus}
-                  extension={item.extension}
-                  className="aspect-video w-full border-b"
-                />
-                <div className="absolute left-2 top-2 flex gap-1">
-                  {item.versionType === "PREVIEW" && <PreviewLabel />}
-                </div>
-                <StatusBadge status={item.status} className="absolute right-2 top-2 shadow-xs" />
-                {meta && meta !== "—" && (
-                  <span className="tabular absolute bottom-2 right-2 rounded bg-black/65 px-1.5 py-0.5 text-[11px] font-medium text-white">
-                    {meta}
-                  </span>
-                )}
-              </div>
-              <div className="flex flex-1 flex-col gap-2 p-3.5">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium group-hover:text-primary" title={item.name}>
-                    {item.name}
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground" title={item.originalFilename}>
-                    {item.originalFilename}
-                  </p>
-                </div>
-                <div className="flex min-w-0 items-center gap-2">
-                  <AppBadge name={item.application.name} color={item.application.brandColor} />
-                  {item.campaign && (
-                    <>
-                      <span className="text-muted-foreground/50">·</span>
-                      <span className="truncate text-xs text-muted-foreground">{item.campaign.name}</span>
-                    </>
-                  )}
-                </div>
-                <div className="mt-auto flex items-center justify-between gap-2 pt-1 text-xs text-muted-foreground">
-                  <span className="truncate">
-                    {CATEGORY_LABELS[item.category]} · <span className="uppercase">{item.extension}</span> · {formatBytes(item.sizeBytes)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-2 border-t pt-2 text-[11px] text-muted-foreground">
-                  <span className="truncate">
-                    {item.uploadedBy?.name ?? "Unknown"} · {formatDate(item.createdAt)}
-                  </span>
-                  <VersionChips versions={item.versions} className="shrink-0 justify-end" />
-                </div>
-              </div>
-            </Link>
-          </li>
-        );
-      })}
-    </ul>
+    <span
+      className="rounded bg-foreground/85 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-background"
+      title="Lite version of the full video"
+    >
+      PREVIEW · LITE
+    </span>
   );
 }
 
@@ -137,6 +73,7 @@ export function CreativeList({ items }: { items: LibraryItem[] }) {
                         {item.versionType === "PREVIEW" && <PreviewLabel />}
                       </span>
                       <span className="block max-w-[280px] truncate text-xs text-muted-foreground">{item.originalFilename}</span>
+                      <BadgeChips badges={item.badges} max={4} className="mt-1" />
                     </span>
                   </Link>
                 </td>

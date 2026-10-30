@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { isStorageConfigured } from "@/lib/env";
-import { abortMultipartUpload, deleteObjects } from "@/lib/storage/r2";
+import { abortMultipartUpload, deleteObjects } from "@/lib/storage/s3";
 import { log } from "./log";
 
 const LOCK_ID = 727_001;

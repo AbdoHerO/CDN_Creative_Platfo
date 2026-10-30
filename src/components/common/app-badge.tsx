@@ -1,3 +1,4 @@
+import { brandInitials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export function AppBadge({
@@ -48,7 +49,7 @@ export function AppLogo({
       style={{ backgroundColor: color }}
       aria-hidden
     >
-      {name.replace(/[^A-Za-z0-9]/g, "").slice(0, 2).toUpperCase()}
+      {brandInitials(name)}
     </span>
   );
 }

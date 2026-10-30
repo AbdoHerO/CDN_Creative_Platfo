@@ -1,7 +1,7 @@
 import { apiError, apiUser, json } from "@/server/api-utils";
 import { abortUpload, getUploadStatus } from "@/server/services/uploads";
 
-/** Upload state, including parts already stored in R2 (for resuming). */
+/** Upload state, including parts already stored (for resuming). */
 export async function GET(request: Request, ctx: RouteContext<"/api/uploads/[id]">) {
   try {
     const user = await apiUser(request);
@@ -12,7 +12,7 @@ export async function GET(request: Request, ctx: RouteContext<"/api/uploads/[id]
   }
 }
 
-/** Cancel an upload: aborts the R2 multipart upload and discards stored parts. */
+/** Cancel an upload: aborts the multipart upload and discards stored parts. */
 export async function DELETE(request: Request, ctx: RouteContext<"/api/uploads/[id]">) {
   try {
     const user = await apiUser(request, { mutating: true });

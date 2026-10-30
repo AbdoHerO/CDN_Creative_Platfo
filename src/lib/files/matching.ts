@@ -7,7 +7,8 @@ import type { CreativeStatus, VersionType } from "@/generated/prisma/enums";
  * Rules
  * - Files are grouped by (application, matchKey). Matching never crosses
  *   applications.
- * - One FULL + its `_preview` in the same batch become one creative.
+ * - One FULL + its `_preview` in the same batch become one creative
+ *   (see `pairPreviewsLoosely` for `_reel` / `_final` style names).
  * - A FULL whose only match is a preview-only creative (preview uploaded first)
  *   completes that creative automatically.
  * - A PREVIEW with exactly one existing match attaches to it automatically.
@@ -48,6 +49,45 @@ export type FileSuggestion = {
   /** Other files of the batch sharing the same match key. */
   peers: string[];
 };
+
+/** Words that often distinguish a master from its preview without changing what it is. */
+const LOOSE_IGNORED_WORDS = new Set(["reel", "final", "master", "full", "hd", "hq"]);
+
+/** Match key without "reel", "final"… : `promo_reel_final_v2` → `promo_v2`. */
+export function looseMatchKey(matchKey: string): string {
+  const words = matchKey.split("_").filter((w) => !LOOSE_IGNORED_WORDS.has(w));
+  return words.length ? words.join("_") : matchKey;
+}
+
+/**
+ * Second pass for previews that found no full version with exactly the same
+ * name in the batch: pair them with the only full version of the batch whose
+ * name matches once words like "reel" or "final" are ignored
+ * (`spot_preview.mp4` ↔ `spot_reel.mp4`, `promo_preview_v2.mp4` ↔
+ * `promo_reel_final_v2.mp4`). The preview takes that full version's match key;
+ * anything ambiguous is left unchanged.
+ */
+export function pairPreviewsLoosely<T extends PlanFile>(files: T[]): T[] {
+  const groupKey = (f: PlanFile) => `${f.applicationId}::${f.matchKey}`;
+  const withFull = new Set(files.filter((f) => f.versionType === "FULL").map(groupKey));
+  const withPreview = new Set(files.filter((f) => f.versionType === "PREVIEW").map(groupKey));
+  return files.map((f) => {
+    if (f.versionType !== "PREVIEW" || withFull.has(groupKey(f))) return f;
+    const loose = looseMatchKey(f.matchKey);
+    const keys = new Set(
+      files
+        .filter(
+          (g) =>
+            g.versionType === "FULL" &&
+            g.applicationId === f.applicationId &&
+            !withPreview.has(groupKey(g)) &&
+            looseMatchKey(g.matchKey) === loose,
+        )
+        .map((g) => g.matchKey),
+    );
+    return keys.size === 1 ? { ...f, matchKey: [...keys][0] } : f;
+  });
+}
 
 export function planAssociations(files: PlanFile[], candidates: Candidate[]): Map<string, FileSuggestion> {
   const result = new Map<string, FileSuggestion>();

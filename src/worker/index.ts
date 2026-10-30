@@ -5,12 +5,12 @@
  * ZIP analysis/extraction, object deletion, storage reconciliation) and runs
  * periodic maintenance. Run one or more replicas next to the web app.
  */
-import "dotenv/config";
+import "@/lib/load-env";
 import { hostname } from "node:os";
 import { prisma } from "@/lib/db";
 import { getEnv, isStorageConfigured } from "@/lib/env";
 import type { JobPayloads } from "@/lib/jobs";
-import { deleteObjects } from "@/lib/storage/r2";
+import { deleteObjects } from "@/lib/storage/s3";
 import { analyzeImport, importFailed, runImport } from "./handlers/imports";
 import { processFile, processFileFailed } from "./handlers/process-file";
 import { reconcileFailed, reconcileStorage } from "./handlers/reconcile";
@@ -74,7 +74,7 @@ async function loop(slot: number) {
 async function main() {
   const env = getEnv();
   if (!isStorageConfigured()) {
-    log.warn("R2 storage is not configured: file jobs will fail until R2_* variables are set.");
+    log.warn("Storage is not configured: file jobs will fail until URL_RUSTFS, BUCKET_NAME, ACCESS_KEY and SECRET_KEY are set.");
   }
   log.info("worker started", { workerId, concurrency: env.WORKER_CONCURRENCY });
 

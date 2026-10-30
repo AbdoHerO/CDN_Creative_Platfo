@@ -94,7 +94,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
           <CardHeader>
             <CardTitle className="text-sm">Storage usage</CardTitle>
             <CardDescription>
-              {isStorageConfigured() ? "Originals and generated previews in Cloudflare R2" : "Storage is not configured"}
+              {isStorageConfigured() ? "Originals and generated previews in RustFS (S3) storage" : "Storage is not configured"}
             </CardDescription>
             {can(user.role, "storage.view") && (
               <CardAction>

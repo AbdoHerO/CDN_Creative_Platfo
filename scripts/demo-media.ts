@@ -10,7 +10,7 @@
  * Requires: configured storage, ffmpeg, a seeded admin, and the worker running
  * to generate thumbnails. Refuses to run with NODE_ENV=production.
  */
-import "dotenv/config";
+import "../src/lib/load-env";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -25,7 +25,7 @@ import { parseFilename } from "../src/lib/files/naming";
 import { fileTypeForName } from "../src/lib/files/types";
 import { newId } from "../src/lib/ids";
 import { originalKey } from "../src/lib/storage/keys";
-import { putObject } from "../src/lib/storage/r2";
+import { putObject } from "../src/lib/storage/s3";
 import { attachFile, createCreativeRecord } from "../src/server/services/creatives";
 import { transitionCreative } from "../src/server/services/validation";
 
@@ -118,7 +118,7 @@ const PLANS: Plan[] = [
 
 async function main() {
   if (process.env.NODE_ENV === "production") throw new Error("demo:media is a development tool.");
-  if (!isStorageConfigured()) throw new Error("Configure storage (R2_* variables) first.");
+  if (!isStorageConfigured()) throw new Error("Configure storage (URL_RUSTFS, BUCKET_NAME, ACCESS_KEY, SECRET_KEY) first.");
   const admin = await prisma.user.findFirst({ where: { role: { key: "ADMIN" }, status: "ACTIVE" }, include: { role: true } });
   if (!admin) throw new Error("Seed the database first (npm run db:seed).");
   const actor = { id: admin.id, name: admin.name, role: admin.role.key, restrictApplications: false, applicationIds: [] as string[] };

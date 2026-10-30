@@ -1,17 +1,22 @@
 import type { VersionType } from "@/generated/prisma/enums";
 
 /**
- * Filename conventions for full / preview versions.
+ * Filename conventions for full / preview (lite) versions.
  *
  *   summer_campaign.mp4          → FULL,    matchKey "summer_campaign"
  *   summer_campaign_preview.mp4  → PREVIEW, matchKey "summer_campaign"
+ *   summer-campaign-preview.mp4  → PREVIEW, matchKey "summer_campaign"
+ *   promo_preview_v2.mp4         → PREVIEW, matchKey "promo_v2"
+ *
+ * "preview" is recognised as a separate word (separated by _ - . or a space)
+ * anywhere after the first word; the word is removed to build the match key.
  *
  * The match key only *suggests* an association. The actual link is the
  * Creative ↔ CreativeFile relation in the database, and ambiguous matches are
  * always resolved by the user.
  */
 
-const PREVIEW_SUFFIX = /_preview$/i;
+const PREVIEW_WORD = /(?<=[^-_\s.])[-_\s.]+preview(?=$|[-_\s.])/i;
 
 export type ParsedFilename = {
   /** Filename without any directory components. */
@@ -20,7 +25,7 @@ export type ParsedFilename = {
   extension: string;
   /** Name without extension. */
   stem: string;
-  /** Stem with the `_preview` suffix removed. */
+  /** Stem with the `preview` word removed. */
   baseStem: string;
   isPreview: boolean;
   detectedVersionType: VersionType;
@@ -44,7 +49,7 @@ export function normalizeMatchKey(value: string): string {
 }
 
 export function humanizeStem(stem: string): string {
-  const cleaned = stem.replace(/[_]+/g, " ").replace(/\s+/g, " ").trim();
+  const cleaned = stem.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
   if (!cleaned) return "Untitled creative";
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
@@ -55,8 +60,8 @@ export function parseFilename(input: string): ParsedFilename {
   const hasExt = dot > 0 && dot < filename.length - 1;
   const extension = hasExt ? filename.slice(dot + 1).toLowerCase() : "";
   const stem = hasExt ? filename.slice(0, dot) : filename;
-  const isPreview = PREVIEW_SUFFIX.test(stem) && stem.length > "_preview".length;
-  const baseStem = isPreview ? stem.replace(PREVIEW_SUFFIX, "") : stem;
+  const isPreview = PREVIEW_WORD.test(stem);
+  const baseStem = isPreview ? stem.replace(PREVIEW_WORD, "") : stem;
   return {
     filename,
     extension,
@@ -67,6 +72,19 @@ export function parseFilename(input: string): ParsedFilename {
     matchKey: normalizeMatchKey(baseStem),
     displayName: humanizeStem(baseStem),
   };
+}
+
+/**
+ * First free creative name: "Name", then "Name (2)", "Name (3)"… `taken` holds
+ * lower-cased names already in use (and is not modified).
+ */
+export function nextFreeName(base: string, taken: ReadonlySet<string>): string {
+  const name = base.trim() || "Untitled creative";
+  if (!taken.has(name.toLowerCase())) return name;
+  for (let n = 2; ; n++) {
+    const candidate = `${name} (${n})`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
 }
 
 /** Make a filename safe for use inside an object key (keeps the extension). */

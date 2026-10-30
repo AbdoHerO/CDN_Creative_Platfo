@@ -4,7 +4,7 @@ import { CreativeCategory, Channel, VersionType } from "@/generated/prisma/enums
 import { prisma } from "@/lib/db";
 import { getEnv, MB } from "@/lib/env";
 import { AppError, ForbiddenError, NotFoundError } from "@/lib/errors";
-import { planAssociations, resolveAssociations, type Association, type Candidate } from "@/lib/files/matching";
+import { pairPreviewsLoosely, planAssociations, resolveAssociations, type Association, type Candidate } from "@/lib/files/matching";
 import { parseFilename } from "@/lib/files/naming";
 import { defaultCategoryFor, fileTypeForName, sniffMatches, ZIP_TYPE, type FileTypeDef } from "@/lib/files/types";
 import { newId } from "@/lib/ids";
@@ -22,15 +22,15 @@ import {
   listUploadedParts,
   presignPutObject,
   presignUploadPart,
-} from "@/lib/storage/r2";
+} from "@/lib/storage/s3";
 import { importArchiveKey, originalKey } from "@/lib/storage/keys";
 import { creativeVisibilityWhere } from "@/lib/visibility";
 import { logActivity } from "@/lib/activity";
 import type { SessionUser } from "@/lib/auth/session-core";
-import { attachFile, createCreativeRecord } from "./creatives";
+import { attachFile, createCreativeRecord, replaceFile } from "./creatives";
 
 /**
- * Direct-to-R2 upload lifecycle.
+ * Direct-to-storage upload lifecycle.
  *
  *  1. plan     – validate names/sizes and suggest full/preview associations.
  *  2. batch    – create creatives for new groups + one UploadSession per file.
@@ -55,7 +55,7 @@ export function uploadLimits() {
 export function computeParts(sizeBytes: number) {
   const { partSize: basePart, multipartThreshold } = uploadLimits();
   if (sizeBytes < multipartThreshold) return { mode: "SINGLE" as const, partSize: null, partCount: null };
-  // R2 requires every part except the last to have the same size.
+  // S3 multipart requires every part except the last to have the same size.
   const minForCount = Math.ceil(sizeBytes / MAX_PARTS);
   const partSize = Math.max(basePart, Math.ceil(minForCount / MB) * MB);
   return { mode: "MULTIPART" as const, partSize, partCount: Math.ceil(sizeBytes / partSize) };
@@ -139,7 +139,9 @@ export async function planUpload(user: SessionUser, input: z.infer<typeof planSc
     }));
 
   const suggestions = planAssociations(
-    valid.map((p) => ({ clientId: p.clientId, applicationId: input.applicationId, matchKey: p.parsed.matchKey, versionType: p.versionType })),
+    pairPreviewsLoosely(
+      valid.map((p) => ({ clientId: p.clientId, applicationId: input.applicationId, matchKey: p.parsed.matchKey, versionType: p.versionType })),
+    ),
     candidates,
   );
 
@@ -188,6 +190,8 @@ export const batchSchema = z.object({
         creativeName: z.string().trim().max(200).nullish(),
         category: z.enum(CreativeCategory).nullish(),
         association: associationSchema,
+        /** Replace this file (deleted once the upload completes) instead of adding a version. */
+        replaceFileId: z.string().min(1).max(64).nullish(),
       }),
     )
     .min(1)
@@ -243,6 +247,26 @@ export async function createUploadBatch(user: SessionUser, raw: z.input<typeof b
     if (!canEditCreative(user, c)) throw new ForbiddenError("You cannot add versions to one of the selected creatives.");
   }
 
+  // Replacements: the file must belong to the targeted creative and the new
+  // file must be the same kind of media (a video replaces a video). The new
+  // file keeps the replaced file's version type.
+  const replaceIds = input.files.flatMap((f) => (f.replaceFileId ? [f.replaceFileId] : []));
+  const replaced = replaceIds.length
+    ? await prisma.creativeFile.findMany({ where: { id: { in: replaceIds } }, select: { id: true, creativeId: true, mediaType: true, versionType: true } })
+    : [];
+  if (new Set(replaceIds).size !== replaceIds.length) throw new AppError("A file can only be replaced once per upload.", 422);
+  for (const f of input.files) {
+    if (!f.replaceFileId) continue;
+    const r = resolved.get(f.clientId)!;
+    const old = replaced.find((o) => o.id === f.replaceFileId);
+    if (!old || r.kind !== "existing" || old.creativeId !== r.creativeId) throw new NotFoundError("The file to replace was not found.");
+    const def = fileTypeForName(f.name)!;
+    if (def.mediaType !== old.mediaType) {
+      throw new AppError(`${f.name}: choose a ${old.mediaType.toLowerCase()} file to replace this ${old.mediaType.toLowerCase()}.`, 422);
+    }
+    f.versionType = old.versionType;
+  }
+
   // Group files that will create the same new creative.
   const groups = new Map<string, typeof input.files>();
   for (const f of input.files) {
@@ -296,6 +320,7 @@ export async function createUploadBatch(user: SessionUser, raw: z.input<typeof b
           fileId,
           versionType: f.versionType,
           label: f.label ?? null,
+          replacesFileId: f.replaceFileId ?? null,
           expiresAt,
         },
       });
@@ -315,7 +340,7 @@ export async function createUploadBatch(user: SessionUser, raw: z.input<typeof b
     return plans;
   });
 
-  // Start the R2 uploads outside the DB transaction (network calls).
+  // Start the storage uploads outside the DB transaction (network calls).
   const out: BatchSessionInfo[] = [];
   for (const plan of sessionPlans) {
     try {
@@ -376,7 +401,7 @@ export async function presignParts(user: SessionUser, sessionId: string, partNum
   return { mode: "MULTIPART" as const, url: null, parts };
 }
 
-/** State needed to resume an interrupted upload (parts already stored in R2). */
+/** State needed to resume an interrupted upload (parts already stored in the bucket). */
 export async function getUploadStatus(user: SessionUser, sessionId: string) {
   const session = await loadOwnSession(user, sessionId);
   let uploadedParts: { partNumber: number; etag: string; size: number }[] = [];
@@ -453,7 +478,7 @@ async function verifyStoredObject(session: { storageKey: string; sizeBytes: bigi
   }
 }
 
-export async function completeUpload(user: SessionUser, sessionId: string, input: z.infer<typeof completeSchema>, meta?: RequestMeta | null) {
+export async function completeUpload(user: SessionUser, sessionId: string, completion: z.infer<typeof completeSchema>, meta?: RequestMeta | null) {
   const session = await loadOwnSession(user, sessionId);
   assertActive(session);
   const def = session.purpose === "ZIP_IMPORT" ? ZIP_TYPE : fileTypeForName(session.filename);
@@ -462,7 +487,7 @@ export async function completeUpload(user: SessionUser, sessionId: string, input
   try {
     if (session.mode === "MULTIPART") {
       if (!session.uploadId || !session.partCount) throw new AppError("Upload is not initialised.", 409);
-      // Use R2's own part listing as the source of truth (not client-supplied ETags).
+      // Use the server's own part listing as the source of truth (not client-supplied ETags).
       const parts = await listUploadedParts(session.storageKey, session.uploadId);
       const numbers = new Set(parts.map((p) => p.partNumber));
       const missing: number[] = [];
@@ -489,7 +514,7 @@ export async function completeUpload(user: SessionUser, sessionId: string, input
     await prisma.$transaction(async (tx) => {
       await tx.uploadSession.update({
         where: { id: session.id },
-        data: { status: "COMPLETED", completedAt: new Date(), checksumSha256: input.sha256 ?? null },
+        data: { status: "COMPLETED", completedAt: new Date(), checksumSha256: completion.sha256 ?? null },
       });
       await tx.importBatch.update({ where: { id: session.importBatchId! }, data: { status: "ANALYZING", archiveKey: session.storageKey } });
       await enqueueJob("ANALYZE_IMPORT", { batchId: session.importBatchId! }, { db: tx });
@@ -500,28 +525,27 @@ export async function completeUpload(user: SessionUser, sessionId: string, input
   const file = await prisma.$transaction(async (tx) => {
     const fresh = await tx.uploadSession.findUniqueOrThrow({ where: { id: session.id } });
     if (fresh.status !== "UPLOADING") throw new AppError("This upload was already completed.", 409);
-    const created = await attachFile(
-      tx,
-      {
-        fileId: session.fileId!,
-        creativeId: session.creativeId!,
-        versionType: session.versionType ?? "FULL",
-        label: session.label,
-        originalFilename: session.filename,
-        storageKey: session.storageKey,
-        sizeBytes: session.sizeBytes,
-        mimeType: def.mime,
-        extension: parseFilename(session.filename).extension,
-        mediaType: def.mediaType,
-        checksumSha256: input.sha256 ?? null,
-        uploadedById: user.id,
-      },
-      { id: user.id, name: user.name },
-      meta,
-    );
+    const input = {
+      fileId: session.fileId!,
+      creativeId: session.creativeId!,
+      versionType: session.versionType ?? "FULL",
+      label: session.label,
+      originalFilename: session.filename,
+      storageKey: session.storageKey,
+      sizeBytes: session.sizeBytes,
+      mimeType: def.mime,
+      extension: parseFilename(session.filename).extension,
+      mediaType: def.mediaType,
+      checksumSha256: completion.sha256 ?? null,
+      uploadedById: user.id,
+    };
+    const actor = { id: user.id, name: user.name };
+    const created = session.replacesFileId
+      ? await replaceFile(tx, { ...input, replacesFileId: session.replacesFileId }, actor, meta)
+      : await attachFile(tx, input, actor, meta);
     await tx.uploadSession.update({
       where: { id: session.id },
-      data: { status: "COMPLETED", completedAt: new Date(), checksumSha256: input.sha256 ?? null },
+      data: { status: "COMPLETED", completedAt: new Date(), checksumSha256: completion.sha256 ?? null },
     });
     return created;
   });

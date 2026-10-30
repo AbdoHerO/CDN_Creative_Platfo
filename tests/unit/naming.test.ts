@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contentDisposition, normalizeMatchKey, parseFilename, safeObjectName } from "@/lib/files/naming";
+import { contentDisposition, nextFreeName, normalizeMatchKey, parseFilename, safeObjectName } from "@/lib/files/naming";
 
 describe("parseFilename", () => {
   it("classifies files ending in _preview as PREVIEW and strips the suffix for matching", () => {
@@ -24,11 +24,21 @@ describe("parseFilename", () => {
     expect(parseFilename("promo.mov").matchKey).toBe(parseFilename("promo_preview.mp4").matchKey);
   });
 
-  it("only treats the exact _preview suffix as a preview marker", () => {
-    expect(parseFilename("product-preview.mp4").isPreview).toBe(false);
+  it("recognises -preview and a preview word in the middle of the name", () => {
+    const hyphen = parseFilename("icoral-anim01-3d-conseil-preview.mp4");
+    expect(hyphen.isPreview).toBe(true);
+    expect(hyphen.matchKey).toBe(parseFilename("icoral-anim01-3d-conseil.mp4").matchKey);
+    const middle = parseFilename("winmed_promo_preview_v2.mp4");
+    expect(middle.isPreview).toBe(true);
+    expect(middle.matchKey).toBe("winmed_promo_v2");
+  });
+
+  it("only treats preview as a separate word after the first one", () => {
     expect(parseFilename("preview.mp4").isPreview).toBe(false);
     expect(parseFilename("_preview.mp4").isPreview).toBe(false);
     expect(parseFilename("preview_of_launch.mp4").isPreview).toBe(false);
+    expect(parseFilename("spot_previews.mp4").isPreview).toBe(false);
+    expect(parseFilename("spotpreview.mp4").isPreview).toBe(false);
   });
 
   it("strips directories from archive paths", () => {
@@ -38,13 +48,22 @@ describe("parseFilename", () => {
 
   it("produces a human readable default name", () => {
     expect(parseFilename("summer_campaign_preview.mp4").displayName).toBe("Summer campaign");
-    expect(parseFilename("WinMed_Spring-Promo_v2.png").displayName).toBe("WinMed Spring-Promo v2");
+    expect(parseFilename("WinMed_Spring-Promo_v2.png").displayName).toBe("WinMed Spring Promo v2");
+    expect(parseFilename("icoral-anim01-3d-conseil-preview.mp4").displayName).toBe("Icoral anim01 3d conseil");
   });
 
   it("handles files without extension", () => {
     const p = parseFilename("README");
     expect(p.extension).toBe("");
     expect(p.stem).toBe("README");
+  });
+});
+
+describe("nextFreeName", () => {
+  it("adds (2), (3)… to names already in use, ignoring case", () => {
+    expect(nextFreeName("Spot", new Set())).toBe("Spot");
+    expect(nextFreeName("Spot", new Set(["spot"]))).toBe("Spot (2)");
+    expect(nextFreeName("Spot", new Set(["spot", "spot (2)"]))).toBe("Spot (3)");
   });
 });
 

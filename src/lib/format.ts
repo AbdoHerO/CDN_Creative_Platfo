@@ -51,3 +51,10 @@ export function formatResolution(width?: number | null, height?: number | null):
 export function pluralize(count: number, singular: string, plural = `${singular}s`) {
   return `${formatNumber(count)} ${count === 1 ? singular : plural}`;
 }
+
+/** Two-letter initials of a brand: "Win+Pharma" → "WP", "WinMed" → "WM", "iCoral" → "IC", "Pharmalien" → "PH". */
+export function brandInitials(name: string): string {
+  const words = name.split(/[^A-Za-z0-9]+|(?=[A-Z])/).filter(Boolean);
+  const letters = words.length >= 2 ? words[0][0] + words[1][0] : (words[0] ?? name).slice(0, 2);
+  return letters.toUpperCase();
+}

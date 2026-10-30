@@ -1,6 +1,6 @@
 "use client";
 
-import { FileArchive, ShieldCheck } from "lucide-react";
+import { Download, FileArchive, FolderTree, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -16,7 +16,7 @@ import { isAbort, uploadFile, type UploadSessionInfo } from "@/lib/upload/engine
 import type { UploadContext } from "./upload-workspace";
 
 /**
- * ZIP import: the archive is uploaded to R2 as-is, then the worker inspects it
+ * ZIP import: the archive is uploaded to storage as-is, then the worker inspects it
  * safely (path traversal, zip bombs, unsupported types) and prepares a review.
  * Nothing is registered until the user confirms the review.
  */
@@ -69,8 +69,8 @@ export function ZipImportForm({ applications, campaigns, initialApplicationId, i
         <CardHeader>
           <CardTitle className="text-base">Import a ZIP archive</CardTitle>
           <CardDescription>
-            Bring existing folders of creatives in one go. You will review every file — detected type, full/preview pairing, application and
-            campaign — before anything is added to the library.
+            Zip your <code className="text-xs">data_creatives</code> folder (one folder per platform) and upload it. You review every file before
+            anything is added; each import adds new creatives and never replaces existing ones.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -116,11 +116,39 @@ export function ZipImportForm({ applications, campaigns, initialApplicationId, i
         </CardContent>
       </Card>
       <aside className="space-y-4">
+        <Card className="gap-3">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <FolderTree className="size-4" /> Folder structure
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <pre className="overflow-x-auto rounded-lg bg-muted/60 p-3 text-[11px] leading-relaxed">{`data_creatives/
+  <platform>/
+    banners/   banner.jpg
+    videos/    spot.mp4
+               spot_preview.mp4
+    pdf/       guide.pdf`}</pre>
+            <ul className="space-y-1 text-xs text-muted-foreground">
+              <li>
+                <span className="font-medium text-foreground">_preview</span> or <span className="font-medium text-foreground">-preview</span>{" "}
+                in a name marks the lite version of a video.
+              </li>
+              <li>A folder for a platform that does not exist yet creates it (administrators).</li>
+              <li>Names already in the library get (2), (3)…</li>
+            </ul>
+            <Button asChild variant="outline" className="w-full" data-testid="download-template">
+              <a href="/api/imports/template" download>
+                <Download /> Download import template
+              </a>
+            </Button>
+          </CardContent>
+        </Card>
         <Card>
           <CardContent>
             <FieldGroup className="gap-4">
               <Field>
-                <FieldLabel>Default application</FieldLabel>
+                <FieldLabel>Fallback application</FieldLabel>
                 <Select
                   value={applicationId}
                   onValueChange={(v) => {
@@ -141,7 +169,7 @@ export function ZipImportForm({ applications, campaigns, initialApplicationId, i
                     ))}
                   </SelectContent>
                 </Select>
-                <FieldDescription>Folders named after another application are suggested for it automatically.</FieldDescription>
+                <FieldDescription>Used only for files that are not inside a platform folder.</FieldDescription>
               </Field>
               <Field>
                 <FieldLabel>Default campaign</FieldLabel>

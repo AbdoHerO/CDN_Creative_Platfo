@@ -37,6 +37,8 @@ export function isJunkEntry(path: string): boolean {
   const name = segments[segments.length - 1] ?? "";
   if (segments.some((s) => s === "__MACOSX" || s === ".git" || s === ".svn")) return true;
   if (/^(\.ds_store|thumbs\.db|desktop\.ini|icon\r)$/i.test(name)) return true;
+  // Instructions shipped with the import template.
+  if (/^(readme|lisez-?moi)\.(txt|md)$/i.test(name)) return true;
   if (name.startsWith("._") || name.startsWith("~$")) return true;
   return segments.some((s) => s.startsWith("."));
 }

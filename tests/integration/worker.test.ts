@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { newId } from "@/lib/ids";
 import { originalKey, importArchiveKey } from "@/lib/storage/keys";
-import { headObject, putObject } from "@/lib/storage/r2";
+import { headObject, putObject } from "@/lib/storage/s3";
 import { attachFile, createCreativeRecord } from "@/server/services/creatives";
 import { analyzeImport, runImport } from "@/worker/handlers/imports";
 import { processFile } from "@/worker/handlers/process-file";

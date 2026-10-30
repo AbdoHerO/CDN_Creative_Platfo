@@ -20,20 +20,20 @@ flowchart LR
     ZIP[ZIP analysis / extraction]
   end
   DB[(PostgreSQL<br/>metadata · sessions · jobs · audit)]
-  R2[(Cloudflare R2<br/>originals · thumbnails · archives)]
+  S3[(RustFS · S3-compatible<br/>originals · thumbnails · archives)]
 
   UI --> PX --> RSC & SA & API
   RSC & SA & API --> DB
-  API -- presign / complete --> R2
-  UE -- presigned PUT (parts) --> R2
-  UI -- presigned GET (previews, downloads) --> R2
+  API -- presign / complete --> S3
+  UE -- presigned PUT (parts) --> S3
+  UI -- presigned GET (previews, downloads) --> S3
   Q --> DB
   Q --> MP & ZIP
-  MP & ZIP <--> R2
+  MP & ZIP <--> S3
 ```
 
 - **One codebase, two processes.** The web app renders pages and handles mutations; the worker runs everything slow or binary-heavy. Both import the same service layer (`src/server/services`, `src/lib`).
-- **Files never flow through the web servers.** Browsers upload to and download from R2 with short-lived presigned URLs. The app only authorises and signs requests.
+- **Files never flow through the web servers.** Browsers upload to and download from RustFS with short-lived presigned URLs. The app only authorises and signs requests.
 - **PostgreSQL is the system of record** for metadata, permissions, sessions, rate limits, the job queue and the audit log. No Redis or extra infrastructure is required.
 
 ### Key decisions
@@ -43,7 +43,8 @@ flowchart LR
 | Next.js App Router, **dynamic rendering** (`cacheComponents: false`) | Every screen is per-user and permission-scoped, so there is no meaningful static shell. Classic dynamic rendering avoids Suspense-boundary constraints and keeps data fresh. |
 | **Database sessions** instead of JWT/Auth library | Instant revocation (disable user, role change, password change), no beta dependency, tokens stored only as SHA-256 hashes. |
 | **Postgres job queue** | One less moving part; `FOR UPDATE SKIP LOCKED` gives safe concurrency across replicas; jobs are inspectable (Settings → System status). |
-| **Direct-to-R2 multipart uploads** | Supports multi-GB masters, parallel parts, resume, and zero bandwidth cost on the app tier. |
+| **Self-hosted RustFS over the S3 API** | Data stays on infrastructure we run; the standard S3 API (AWS SDK v3, presigned URLs, path-style buckets) keeps the code portable to any S3-compatible store. |
+| **Direct-to-storage multipart uploads** | Supports multi-GB masters, parallel parts, resume, and zero bandwidth cost on the app tier. |
 | **File-level library rows** | One row per current full version, plus preview rows when enabled. Previews are hidden by default yet listable and labelled, and "largest files" sorting is a single indexed query. |
 | **Permission matrix in code** | Versioned and reviewed; the `Role` table holds role metadata only. All list, detail, statistics and search queries go through `creativeVisibilityWhere()`. |
 
@@ -61,6 +62,8 @@ erDiagram
   Creative ||--o{ CreativeFile : "versions (full/preview/variant)"
   Creative ||--o{ CreativeTag : ""
   Tag ||--o{ CreativeTag : ""
+  Creative ||--o{ CreativeBadge : ""
+  Badge ||--o{ CreativeBadge : ""
   Campaign ||--o{ CampaignTag : ""
   Tag ||--o{ CampaignTag : ""
   Creative ||--o{ Validation : "status history"
@@ -82,9 +85,10 @@ erDiagram
 |---|---|
 | `Creative` | Logical asset: name, application (required), campaign, category, status, channels, keywords, `matchKey`. Indexes on `(applicationId,status)`, `(applicationId,matchKey)`, status/updatedAt, plus a trigram GIN index on `name`. |
 | `CreativeFile` | One stored object: `versionType`, `versionNumber` (unique per creative+type), `isCurrent`, original filename, `storageKey` (unique), size (BigInt), MIME, resolution, duration, codecs, page count, browser checksum, worker-verified checksum, integrity and processing status, thumbnail/display keys. Trigram index on `originalFilename`. Cascade-deleted with its creative. |
+| `Badge` / `CreativeBadge` | Coloured labels on creatives; catalog managed by admins and managers, auto-assigned on ZIP import when the badge name is part of the file name. |
 | `Validation` | Immutable transition record: from/to status, action, reviewer, comment, decline reason, the file version reviewed. |
 | `ActivityLog` | Audit trail with a human-readable summary kept even after entities are deleted (`SetNull` foreign keys), plus metadata, IP and user agent. |
-| `UploadSession` | Direct upload state: mode, R2 upload id, part size/count, fingerprint (for resume), target creative, and the pre-reserved file id. |
+| `UploadSession` | Direct upload state: mode, S3 multipart upload id, part size/count, fingerprint (for resume), target creative, and the pre-reserved file id. |
 | `ImportBatch` / `ImportItem` | ZIP import with per-entry validation result, suggestions, the user's decisions and the outcome. |
 | `Job` | Queue: type, JSON payload, attempts, backoff (`runAt`), lock/heartbeat. |
 
@@ -96,7 +100,7 @@ Media binaries are never stored in PostgreSQL. Sizes use `BigInt` (masters can e
 sequenceDiagram
   participant B as Browser
   participant A as Web app
-  participant R as R2
+  participant R as RustFS
   participant W as Worker
   B->>A: POST /api/uploads/plan (names, sizes)
   A-->>B: detected version types + association suggestions
@@ -120,8 +124,8 @@ sequenceDiagram
   W->>R: PUT derived/<fileId>/thumbnail.webp (separate object)
 ```
 
-- **Resume:** the session fingerprint (name + size + lastModified) lets the user re-select the same file after a crash; R2's `ListParts` is the source of truth for which parts exist.
-- **Cancel:** aborts the R2 multipart upload and removes the creative if it ended up empty.
+- **Resume:** the session fingerprint (name + size + lastModified) lets the user re-select the same file after a crash; the storage server's `ListParts` is the source of truth for which parts exist.
+- **Cancel:** aborts the multipart upload and removes the creative if it ended up empty.
 - **Validation:** extension allow-list, size limit (env cap and admin setting), stored size equals declared size, and magic bytes must match the declared type. Mismatches are deleted and rejected.
 - **Quality preservation:** originals are written once and never rewritten. Derived assets live under `derived/`.
 
@@ -129,7 +133,8 @@ Object keys use immutable ids (`originals/<app>/<creative>/<file>/<safe-name>`),
 
 ## 4. Full / preview matching
 
-1. `parseFilename()` detects a trailing `_preview` (case-insensitive) and computes a `matchKey`: the base name without extension or suffix, normalised (lower-case, accents and separators folded).
+1. `parseFilename()` detects the word `preview` (after the first word, separated by `_ - .` or a space, case-insensitive) and computes a `matchKey`: the base name without extension or that word, normalised (lower-case, accents and separators folded).
+   `pairPreviewsLoosely()` then pairs a preview that found no exact full version with the only full version of the batch that matches once *reel*, *final*, *master*, *full*, *hd*, *hq* are ignored (`x_preview` ↔ `x_reel`).
 2. `planAssociations()` groups files by `(application, matchKey)` and decides:
 
 | Situation | Result |
@@ -139,6 +144,10 @@ Object keys use immutable ids (`originals/<app>/<creative>/<file>/<safe-name>`),
 | A full whose only match is a preview-only creative | Completes that creative automatically |
 | A preview with exactly one existing match | Attached to it (shown, changeable) |
 | Several candidates, or a full colliding with a creative that already has a full version | **User must decide**; upload/import is blocked until resolved |
+
+**ZIP imports** use the same pairing within the archive but never match existing creatives: every group becomes a new creative, named uniquely per application (`Name (2)`). The platform comes from the folder above `banners/` or `videos/`; unknown platform folders become applications on confirmation (admins).
+
+**Replacing a file** (`replaceFile()`) deletes the old `CreativeFile` row in the same transaction that registers the new upload (same version number and current flag) and queues `DELETE_OBJECTS` for its original and derived objects.
 
 Matching never crosses applications, never relies on filenames alone (the link is the `Creative ↔ CreativeFile` relation), and every automatic association is displayed with its reason before upload.
 
@@ -185,10 +194,10 @@ Approving or declining straight from `PENDING` records an explicit `REVIEW_START
 
 | Risk | Mitigation |
 |---|---|
-| Multi-GB uploads over unstable networks | Multipart with parallel parts, per-part retries, resume from R2 `ListParts`, 48 h session TTL with automatic cleanup |
+| Multi-GB uploads over unstable networks | Multipart with parallel parts, per-part retries, resume from the server's `ListParts`, 48 h session TTL with automatic cleanup |
 | Browser cannot play some containers or codecs | Graceful fallback to poster + download; `_preview` versions are usually MP4/H.264 |
 | Worker downtime | Uploads still succeed; jobs queue up, retry with backoff, recover stale locks; Settings shows a stalled-queue warning |
-| Storage growth beyond the free tier | Storage page with per-application/category usage, threshold warning, cost estimate, reconciliation for orphans |
+| Storage growth beyond provisioned disks | Storage page with per-application/category usage, threshold warning, cost estimate, reconciliation for orphans |
 | Name-based matching linking unrelated files | Matching scoped to application; ambiguous cases require explicit decisions; files can be moved/linked later; every link is audited |
 | Malicious archives / disguised files | See security model; rejected entries are listed with reasons |
 | Approved status drifting from content | New full version resets approval (configurable); the approved version is recorded and highlighted |

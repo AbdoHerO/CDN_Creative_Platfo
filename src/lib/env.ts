@@ -26,14 +26,13 @@ const schema = z.object({
 
   SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
 
-  R2_ACCOUNT_ID: optionalString,
-  R2_ACCESS_KEY_ID: optionalString,
-  R2_SECRET_ACCESS_KEY: optionalString,
-  R2_BUCKET: optionalString,
-  /** Override for the S3 endpoint. Defaults to https://<account>.r2.cloudflarestorage.com */
-  R2_ENDPOINT: optionalString,
-  R2_REGION: z.string().default("auto"),
-  R2_FORCE_PATH_STYLE: boolish,
+  /** S3 API endpoint of the RustFS server, e.g. https://files.example.com */
+  URL_RUSTFS: optionalString,
+  BUCKET_NAME: optionalString,
+  ACCESS_KEY: optionalString,
+  SECRET_KEY: optionalString,
+  /** Signing region; must match the server's RUSTFS_REGION (RustFS default: us-east-1). */
+  S3_REGION: z.string().default("us-east-1"),
 
   UPLOAD_MAX_FILE_SIZE_MB: z.coerce.number().int().min(1).default(20480),
   UPLOAD_PART_SIZE_MB: z.coerce.number().int().min(5).max(512).default(16),
@@ -82,21 +81,18 @@ export type StorageConfig = {
   bucket: string;
   accessKeyId: string;
   secretAccessKey: string;
-  forcePathStyle: boolean;
 };
 
+/** S3-compatible object storage (RustFS). Path-style addressing is always used. */
 export function getStorageConfig(): StorageConfig | null {
   const env = getEnv();
-  const endpoint =
-    env.R2_ENDPOINT ?? (env.R2_ACCOUNT_ID ? `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com` : undefined);
-  if (!endpoint || !env.R2_BUCKET || !env.R2_ACCESS_KEY_ID || !env.R2_SECRET_ACCESS_KEY) return null;
+  if (!env.URL_RUSTFS || !env.BUCKET_NAME || !env.ACCESS_KEY || !env.SECRET_KEY) return null;
   return {
-    endpoint: endpoint.replace(/\/+$/, ""),
-    region: env.R2_REGION,
-    bucket: env.R2_BUCKET,
-    accessKeyId: env.R2_ACCESS_KEY_ID,
-    secretAccessKey: env.R2_SECRET_ACCESS_KEY,
-    forcePathStyle: env.R2_FORCE_PATH_STYLE ?? true,
+    endpoint: env.URL_RUSTFS.replace(/\/+$/, ""),
+    region: env.S3_REGION,
+    bucket: env.BUCKET_NAME,
+    accessKeyId: env.ACCESS_KEY,
+    secretAccessKey: env.SECRET_KEY,
   };
 }
 

@@ -12,9 +12,7 @@ const SESSION_COOKIE = "cmp_session";
 const PUBLIC_PATHS = ["/login", "/api/health"];
 
 function storageOrigin(): string {
-  const explicit = process.env.R2_ENDPOINT;
-  const account = process.env.R2_ACCOUNT_ID;
-  const endpoint = explicit && explicit.trim() !== "" ? explicit : account ? `https://${account}.r2.cloudflarestorage.com` : "";
+  const endpoint = process.env.URL_RUSTFS?.trim();
   try {
     return endpoint ? new URL(endpoint).origin : "";
   } catch {
@@ -24,9 +22,8 @@ function storageOrigin(): string {
 
 function buildCsp(nonce: string) {
   const isDev = process.env.NODE_ENV !== "production";
-  const storage = storageOrigin();
-  // Presigned URLs may use either the path-style endpoint or a bucket subdomain.
-  const storageSources = storage ? `${storage} ${storage.replace("://", "://*.")}` : "";
+  // Presigned URLs are path-style, so the storage endpoint is a single origin.
+  const storageSources = storageOrigin();
   return [
     `default-src 'self'`,
     // 'wasm-unsafe-eval' allows WebAssembly (in-browser SHA-256 of uploads) without allowing JS eval().
@@ -37,6 +34,8 @@ function buildCsp(nonce: string) {
     `connect-src 'self' ${storageSources}${isDev ? " ws: wss:" : ""}`,
     `frame-src 'self' blob: ${storageSources}`,
     `font-src 'self' data:`,
+    // pdf.js renders PDFs in a web worker served from /pdfjs.
+    `worker-src 'self' blob:`,
     `object-src 'none'`,
     `base-uri 'self'`,
     `form-action 'self'`,
@@ -85,7 +84,8 @@ export function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     {
-      source: "/((?!_next/static|_next/image|favicon.ico|robots.txt).*)",
+      // Static assets (including the pdf.js runtime in /pdfjs) skip the proxy.
+      source: "/((?!_next/static|_next/image|pdfjs/|favicon.ico|robots.txt).*)",
       missing: [{ type: "header", key: "next-router-prefetch" }],
     },
   ],

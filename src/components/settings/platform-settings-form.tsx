@@ -98,7 +98,7 @@ export function PlatformSettingsForm({ settings, serverMaxUploadMb }: { settings
           <Field data-invalid={!!errors.storagePricePerGbMonth}>
             <FieldLabel htmlFor="price">Storage price ($ per GB-month)</FieldLabel>
             <Input id="price" type="number" min={0} step="0.001" {...form.register("storagePricePerGbMonth")} />
-            <FieldDescription>Used for cost estimates. Cloudflare R2 Standard: $0.015.</FieldDescription>
+            <FieldDescription>Your own storage cost per GB-month (disks, replication, backups). Used for cost estimates.</FieldDescription>
           </Field>
         </div>
         <div>

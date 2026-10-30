@@ -37,7 +37,7 @@ test.describe.serial("creative lifecycle", () => {
     await expect(page.getByText(/2 files uploaded to 1 creative/)).toBeVisible();
   });
 
-  test("preview versions are hidden by default and can be shown, labelled PREVIEW", async ({ page }) => {
+  test("preview versions are hidden by default and can be shown, labelled PREVIEW · LITE", async ({ page }) => {
     await login(page, "creator", `/library?q=${stamp}`);
     const toggle = page.getByRole("switch", { name: "Show preview versions" });
     // Precondition: the preference is per user and persists; start from "off".
@@ -48,7 +48,7 @@ test.describe.serial("creative lifecycle", () => {
     }
     const cards = page.locator("main ul li a").filter({ hasText: displayName });
     await expect(cards).toHaveCount(1);
-    const previewLabel = page.getByText("PREVIEW", { exact: true });
+    const previewLabel = page.getByText("PREVIEW · LITE", { exact: true });
     await expect(cards.filter({ has: previewLabel })).toHaveCount(0);
 
     await toggle.click();

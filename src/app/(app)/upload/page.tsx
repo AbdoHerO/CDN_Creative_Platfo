@@ -44,7 +44,7 @@ export default async function UploadPage({ searchParams }: PageProps<"/upload">)
           <AlertTriangle />
           <AlertTitle>File storage is not configured</AlertTitle>
           <AlertDescription>
-            Uploads are disabled until Cloudflare R2 credentials are set (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET). See
+            Uploads are disabled until the RustFS storage settings are set (URL_RUSTFS, BUCKET_NAME, ACCESS_KEY, SECRET_KEY). See
             the deployment guide in the README.
           </AlertDescription>
         </Alert>

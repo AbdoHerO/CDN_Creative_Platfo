@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import type { Association } from "@/lib/files/matching";
 import { AppError, ForbiddenError, NotFoundError } from "@/lib/errors";
-import { headObject } from "@/lib/storage/r2";
+import { headObject } from "@/lib/storage/s3";
 import { abortUpload, completeUpload, computeParts, createUploadBatch, getUploadStatus, planUpload } from "@/server/services/uploads";
 import { mp4Bytes, pngBytes, randomBytesOf, readObject, resetDatabase, seedWorld, sha256, uploadThroughSession, type World } from "./helpers";
 

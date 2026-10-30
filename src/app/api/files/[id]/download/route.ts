@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { logActivity } from "@/lib/activity";
 import { getEnv } from "@/lib/env";
-import { signedGetUrl } from "@/lib/storage/r2";
+import { signedGetUrl } from "@/lib/storage/s3";
 import { VERSION_TYPE_LABELS } from "@/lib/constants";
 import { apiError, apiUser, requestMeta } from "@/server/api-utils";
 import { loadViewableFile } from "@/server/services/file-access";
 
 /**
  * Download the original, byte-identical file. Authorisation is checked here;
- * the browser is then redirected to a short-lived presigned R2 URL that sets
+ * the browser is then redirected to a short-lived presigned storage URL that sets
  * the original filename.
  */
 export async function GET(request: Request, ctx: RouteContext<"/api/files/[id]/download">) {

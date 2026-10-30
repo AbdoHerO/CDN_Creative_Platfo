@@ -1,16 +1,17 @@
 /**
  * Idempotent seed.
  *
- * Always: roles, the four initial applications, the first admin account.
+ * Always: roles, the four initial applications, the default badges, the first admin account.
  * Optional (SEED_DEMO_USERS=true, development only): one user per role and a
  * few campaigns/tags so every screen can be exercised. No creatives or files are
  * seeded — those must go through the real upload pipeline (see
  * `npm run demo:media` to upload generated sample media to the bucket).
  */
-import "dotenv/config";
+import "../src/lib/load-env";
 import { prisma } from "../src/lib/db";
 import { generateTemporaryPassword, hashPassword } from "../src/lib/auth/password";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "../src/lib/constants";
+import { badgeSlug, DEFAULT_BADGES } from "../src/lib/badges";
 import type { RoleKey } from "../src/generated/prisma/enums";
 
 const APPLICATIONS = [
@@ -36,6 +37,15 @@ async function main() {
     await prisma.application.upsert({
       where: { slug: app.slug },
       create: { ...app, sortOrder: index },
+      update: {},
+    });
+  }
+
+  // Default badges (created once; admins can rename, recolour or delete them).
+  for (const [index, badge] of DEFAULT_BADGES.entries()) {
+    await prisma.badge.upsert({
+      where: { slug: badgeSlug(badge.name) },
+      create: { ...badge, slug: badgeSlug(badge.name), sortOrder: index },
       update: {},
     });
   }
@@ -75,7 +85,7 @@ async function main() {
 }
 
 async function seedDemo(roles: Record<RoleKey, string>) {
-  // `||`, not `??`: `.env.example` ships SEED_DEMO_PASSWORD="" (empty means "use the default").
+  // `||`, not `??`: `.env.dev.example` ships SEED_DEMO_PASSWORD="" (empty means "use the default").
   const password = process.env.SEED_DEMO_PASSWORD || "Demo-Password-2026";
   const passwordHash = await hashPassword(password);
   const users: { email: string; name: string; role: RoleKey; jobTitle: string }[] = [

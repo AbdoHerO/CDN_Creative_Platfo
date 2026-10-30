@@ -11,7 +11,8 @@ import {
 import type { SessionUser } from "@/lib/auth/session-core";
 import { LIBRARY_SORTS, PAGE_SIZES, type LibrarySort } from "@/lib/constants";
 import { prisma } from "@/lib/db";
-import { trySignedGetUrl } from "@/lib/storage/r2";
+import { fileTypeForName } from "@/lib/files/types";
+import { trySignedGetUrl } from "@/lib/storage/s3";
 import { creativeVisibilityWhere } from "@/lib/visibility";
 
 /**
@@ -58,6 +59,20 @@ export const libraryParamsSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v && /^[a-z0-9-]{1,60}$/.test(v) ? v : undefined)),
+  badge: z
+    .string()
+    .optional()
+    .transform((v) => (v && /^[a-z0-9-]{1,80}$/.test(v) ? v : undefined)),
+  /** Validation state: approved, waiting (draft / pending / in review) or declined. */
+  review: z
+    .string()
+    .optional()
+    .transform((v) => (v === "approved" || v === "waiting" || v === "declined" ? v : undefined)),
+  /** With or without a lite (preview) version. */
+  lite: z
+    .string()
+    .optional()
+    .transform((v) => (v === "with" || v === "without" ? v : undefined)),
   uploader: optionalId,
   from: optionalDate,
   to: optionalDate,
@@ -104,6 +119,7 @@ export function searchWhere(q: string | undefined): Prisma.CreativeWhereInput[] 
         { description: contains },
         { keywords: { has: token.toLowerCase() } },
         { tags: { some: { tag: { name: contains } } } },
+        { badges: { some: { badge: { name: contains } } } },
         { campaign: { name: contains } },
         { application: { name: contains } },
         { files: { some: { originalFilename: contains } } },
@@ -111,6 +127,12 @@ export function searchWhere(q: string | undefined): Prisma.CreativeWhereInput[] 
     };
   });
 }
+
+export const REVIEW_STATUSES = {
+  approved: { in: ["APPROVED"] },
+  waiting: { in: ["DRAFT", "PENDING", "IN_REVIEW"] },
+  declined: { in: ["DECLINED"] },
+} satisfies Record<string, Prisma.EnumCreativeStatusFilter>;
 
 export function buildCreativeWhere(user: SessionUser, p: Partial<LibraryParams>, fixedStatus?: CreativeStatus): Prisma.CreativeWhereInput {
   const and: Prisma.CreativeWhereInput[] = [creativeVisibilityWhere(user)];
@@ -121,6 +143,10 @@ export function buildCreativeWhere(user: SessionUser, p: Partial<LibraryParams>,
   if (p.campaign) and.push({ campaignId: p.campaign });
   if (p.category) and.push({ category: p.category });
   if (p.tag) and.push({ tags: { some: { tag: { slug: p.tag } } } });
+  if (p.badge) and.push({ badges: { some: { badge: { slug: p.badge } } } });
+  if (p.review) and.push({ status: REVIEW_STATUSES[p.review] });
+  if (p.lite === "with") and.push({ files: { some: { versionType: "PREVIEW" } } });
+  if (p.lite === "without") and.push({ files: { none: { versionType: "PREVIEW" } } });
   if (p.uploader) and.push({ createdById: p.uploader });
   if (p.from) and.push({ createdAt: { gte: new Date(`${p.from}T00:00:00.000Z`) } });
   if (p.to) and.push({ createdAt: { lt: new Date(new Date(`${p.to}T00:00:00.000Z`).getTime() + 86_400_000) } });
@@ -162,6 +188,7 @@ export type LibraryItem = {
   width: number | null;
   height: number | null;
   durationSeconds: number | null;
+  pageCount: number | null;
   processingStatus: ProcessingStatus;
   thumbnailUrl: string | null;
   createdAt: string;
@@ -170,6 +197,11 @@ export type LibraryItem = {
   campaign: { id: string; name: string } | null;
   uploadedBy: { id: string; name: string } | null;
   versions: { full: number; preview: number; variant: number };
+  badges: { name: string; slug: string; color: string }[];
+  /** The creative has a lite (preview) version. */
+  hasPreview: boolean;
+  /** Short muted clip played on hover: the lite version when there is one, else this file. */
+  hoverVideoUrl: string | null;
 };
 
 export async function queryLibrary(
@@ -206,8 +238,11 @@ export async function queryLibrary(
         width: true,
         height: true,
         durationSeconds: true,
+        pageCount: true,
         processingStatus: true,
         thumbnailKey: true,
+        storageKey: true,
+        mimeType: true,
         creative: {
           select: {
             id: true,
@@ -220,7 +255,8 @@ export async function queryLibrary(
             application: { select: { id: true, name: true, brandColor: true } },
             campaign: { select: { id: true, name: true } },
             createdBy: { select: { id: true, name: true } },
-            files: { select: { versionType: true } },
+            files: { select: { versionType: true, isCurrent: true, mediaType: true, storageKey: true, mimeType: true, originalFilename: true } },
+            badges: { select: { badge: { select: { name: true, slug: true, color: true, sortOrder: true } } } },
           },
         },
       },
@@ -229,6 +265,7 @@ export async function queryLibrary(
 
   const items: LibraryItem[] = await Promise.all(
     rows.map(async (r) => ({
+      ...(await hoverVideo(r)),
       fileId: r.id,
       creativeId: r.creative.id,
       name: r.creative.name,
@@ -243,6 +280,7 @@ export async function queryLibrary(
       width: r.width,
       height: r.height,
       durationSeconds: r.durationSeconds,
+      pageCount: r.pageCount,
       processingStatus: r.processingStatus,
       thumbnailUrl: await trySignedGetUrl(r.thumbnailKey, { stable: true }),
       createdAt: r.creative.createdAt.toISOString(),
@@ -255,16 +293,81 @@ export async function queryLibrary(
         preview: r.creative.files.filter((f) => f.versionType === "PREVIEW").length,
         variant: r.creative.files.filter((f) => f.versionType === "VARIANT").length,
       },
+      badges: r.creative.badges
+        .map((b) => b.badge)
+        .sort((x, y) => x.sortOrder - y.sortOrder || x.name.localeCompare(y.name))
+        .map(({ name, slug, color }) => ({ name, slug, color })),
     })),
   );
 
   return { items, total, page, pageSize, showPreviews };
 }
 
+type HoverSource = { storageKey: string; mimeType: string; originalFilename: string; mediaType: MediaType };
+
+/** Browser-playable video for the hover preview: the current lite version first, else the row's own file. */
+async function hoverVideo(r: {
+  versionType: VersionType;
+  mediaType: MediaType;
+  storageKey: string;
+  mimeType: string;
+  originalFilename: string;
+  creative: { files: (HoverSource & { versionType: VersionType; isCurrent: boolean })[] };
+}) {
+  const lite = r.creative.files.find((f) => f.versionType === "PREVIEW" && f.isCurrent);
+  const candidates: (HoverSource | undefined)[] = r.versionType === "PREVIEW" ? [r] : [lite, r];
+  const source = candidates.find((f) => f?.mediaType === "VIDEO" && fileTypeForName(f.originalFilename)?.browserPreviewable);
+  return {
+    hasPreview: !!lite,
+    hoverVideoUrl: source
+      ? await trySignedGetUrl(source.storageKey, { stable: true, contentType: source.mimeType === "video/quicktime" ? "video/mp4" : source.mimeType })
+      : null,
+  };
+}
+
+/**
+ * Counts for the library banner (platform chips, validation and lite switches).
+ * Each dimension is counted with every other active filter applied, so the
+ * numbers tell what clicking a chip would show. Counts are creatives with a
+ * current full version, like the library rows.
+ */
+export async function libraryCounts(user: SessionUser, p: LibraryParams, fixedStatus?: CreativeStatus) {
+  const listed = (q: Partial<LibraryParams>): Prisma.CreativeWhereInput => ({
+    AND: [
+      buildCreativeWhere(user, q, fixedStatus),
+      {
+        files: {
+          some: { isCurrent: true, versionType: "FULL", ...(q.type ? { mediaType: q.type } : {}), ...(q.format ? { extension: q.format } : {}) },
+        },
+      },
+    ],
+  });
+  const [byApp, byStatus, withLite, withoutLite] = await Promise.all([
+    prisma.creative.groupBy({ by: ["applicationId"], where: listed({ ...p, app: undefined, campaign: undefined }), _count: { _all: true } }),
+    prisma.creative.groupBy({ by: ["status"], where: listed({ ...p, review: undefined }), _count: { _all: true } }),
+    prisma.creative.count({ where: listed({ ...p, lite: "with" }) }),
+    prisma.creative.count({ where: listed({ ...p, lite: "without" }) }),
+  ]);
+  const status = (list: CreativeStatus[]) => byStatus.filter((s) => list.includes(s.status)).reduce((n, s) => n + s._count._all, 0);
+  return {
+    apps: Object.fromEntries(byApp.map((a) => [a.applicationId, a._count._all])) as Record<string, number>,
+    appsTotal: byApp.reduce((n, a) => n + a._count._all, 0),
+    review: {
+      all: byStatus.reduce((n, s) => n + s._count._all, 0),
+      approved: status(["APPROVED"]),
+      waiting: status(["DRAFT", "PENDING", "IN_REVIEW"]),
+      declined: status(["DECLINED"]),
+    },
+    lite: { all: withLite + withoutLite, with: withLite, without: withoutLite },
+  };
+}
+
+export type LibraryCounts = Awaited<ReturnType<typeof libraryCounts>>;
+
 /** Options for the filter bar, scoped to what the user can see. */
 export async function libraryFacets(user: SessionUser, selectedApp?: string) {
   const visible = creativeVisibilityWhere(user);
-  const [applications, campaigns, tags, uploaders] = await Promise.all([
+  const [applications, campaigns, tags, uploaders, badges] = await Promise.all([
     prisma.application.findMany({
       where: user.restrictApplications ? { id: { in: user.applicationIds } } : {},
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -291,12 +394,14 @@ export async function libraryFacets(user: SessionUser, selectedApp?: string) {
       select: { id: true, name: true },
       take: 300,
     }),
+    prisma.badge.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }], select: { slug: true, name: true, color: true } }),
   ]);
   return {
     applications,
     campaigns: campaigns.map((c) => ({ id: c.id, name: c.name, application: c.application.name })),
     tags,
     uploaders,
+    badges,
   };
 }
 

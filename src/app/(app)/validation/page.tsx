@@ -16,7 +16,7 @@ import { CATEGORY_LABELS } from "@/lib/constants";
 import { prisma } from "@/lib/db";
 import { formatBytes, formatDateTime, timeAgo } from "@/lib/format";
 import { can, canReviewCreative, canWithdrawCreative } from "@/lib/permissions";
-import { trySignedGetUrl } from "@/lib/storage/r2";
+import { trySignedGetUrl } from "@/lib/storage/s3";
 import { cn } from "@/lib/utils";
 import { creativeVisibilityWhere } from "@/lib/visibility";
 import { availableActions } from "@/lib/workflow";

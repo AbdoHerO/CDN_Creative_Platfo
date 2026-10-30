@@ -2,7 +2,7 @@ import type { MediaType } from "@/generated/prisma/enums";
 
 /**
  * Allowed upload formats. The extension decides the canonical MIME type stored on
- * the R2 object; the actual bytes are then sniffed (magic numbers) server-side and
+ * the stored object; the actual bytes are then sniffed (magic numbers) server-side and
  * must agree with the declared media family before a file is accepted.
  */
 
@@ -94,6 +94,8 @@ export function defaultCategoryFor(mediaType: MediaType) {
       return "MARKETING_VIDEO" as const;
     case "IMAGE":
       return "PROMOTIONAL_IMAGE" as const;
+    case "DOCUMENT":
+      return "DOCUMENT" as const;
     default:
       return "OTHER" as const;
   }

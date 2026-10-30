@@ -1,10 +1,12 @@
 "use client";
 
-import { AlertTriangle, Download, ExternalLink, FileAudio, FileQuestion, Loader2 } from "lucide-react";
+import { AlertTriangle, Download, FileAudio, FileQuestion, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { CreativeDetailFile } from "@/server/queries/creative-detail";
 import { ImageZoomViewer } from "./image-zoom-viewer";
+import { PdfReader } from "./pdf-reader";
+import { VideoPlayer } from "./video-player";
 
 /**
  * Inline preview of a version — built-in video player, zoomable image viewer,
@@ -46,19 +48,14 @@ export function CreativeViewer({ file, name }: { file: CreativeDetailFile; name:
       );
     }
     return (
-      <div className="overflow-hidden rounded-xl border bg-black">
-        <video
-          key={file.id}
-          controls
-          preload="metadata"
-          playsInline
-          poster={file.thumbnailUrl ?? undefined}
-          className="mx-auto max-h-[min(70vh,720px)] w-full"
-          onError={() => setFailed(true)}
-        >
-          <source src={file.mediaUrl} type={file.mimeType === "video/quicktime" ? "video/mp4" : file.mimeType} />
-        </video>
-      </div>
+      <VideoPlayer
+        key={file.id}
+        src={file.mediaUrl}
+        type={file.mimeType === "video/quicktime" ? "video/mp4" : file.mimeType}
+        poster={file.thumbnailUrl}
+        title={name}
+        onError={() => setFailed(true)}
+      />
     );
   }
 
@@ -71,21 +68,13 @@ export function CreativeViewer({ file, name }: { file: CreativeDetailFile; name:
   if (file.mediaType === "DOCUMENT") {
     if (file.extension === "pdf") {
       return (
-        <div className="space-y-2">
-          <iframe
-            key={file.id}
-            src={file.mediaUrl}
-            title={`${name} (PDF)`}
-            className="h-[min(78vh,900px)] w-full rounded-xl border bg-muted"
-          />
-          <div className="flex justify-end">
-            <Button asChild variant="ghost" size="sm">
-              <a href={`/api/files/${file.id}/preview`} target="_blank" rel="noreferrer">
-                <ExternalLink /> Open in new tab
-              </a>
-            </Button>
-          </div>
-        </div>
+        <PdfReader
+          key={file.id}
+          src={file.mediaUrl}
+          title={name}
+          downloadHref={`/api/files/${file.id}/download`}
+          openHref={`/api/files/${file.id}/preview`}
+        />
       );
     }
     if (file.displayUrl) return <ImageZoomViewer key={file.id} src={file.displayUrl} alt={name} />;

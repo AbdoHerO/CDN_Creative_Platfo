@@ -60,14 +60,14 @@ export default async function StoragePage() {
       {snapshot?.status === "RUNNING" && <AutoRefresh intervalMs={3000} />}
       <PageHeader
         title="Storage"
-        description="Usage computed from synchronised database records of every object stored in Cloudflare R2. Run a reconciliation to compare with the bucket itself."
+        description="Usage computed from synchronised database records of every object stored in RustFS. Run a reconciliation to compare with the bucket itself."
         actions={can(user.role, "storage.manage") && config && <ReconcileButton disabled={snapshot?.status === "RUNNING"} />}
       />
       {!config && (
         <Alert variant="destructive" className="mb-6">
           <AlertTriangle />
-          <AlertTitle>Cloudflare R2 is not configured</AlertTitle>
-          <AlertDescription>Set the R2_* environment variables to enable uploads and storage reconciliation.</AlertDescription>
+          <AlertTitle>RustFS storage is not configured</AlertTitle>
+          <AlertDescription>Set URL_RUSTFS, BUCKET_NAME, ACCESS_KEY and SECRET_KEY to enable uploads and storage reconciliation.</AlertDescription>
         </Alert>
       )}
 
@@ -100,7 +100,7 @@ export default async function StoragePage() {
               <Row label={`Retained ZIP archives (${archives._count._all})`} value={formatBytes(archiveBytes)} />
             </dl>
             <p className="text-xs text-muted-foreground">
-              R2 has no egress fees; storage is billed per GB-month. The architecture scales to many terabytes — only the threshold needs adjusting.
+              Self-hosted on RustFS: the estimate uses your own cost per GB-month (Settings). Add disks or nodes to grow; only the threshold needs adjusting.
             </p>
           </CardContent>
         </Card>

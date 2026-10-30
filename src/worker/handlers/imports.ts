@@ -8,18 +8,19 @@ import { pipeline } from "node:stream/promises";
 import { fileTypeFromBuffer } from "file-type";
 import type { CreativeCategory, VersionType } from "@/generated/prisma/enums";
 import { logActivity } from "@/lib/activity";
+import { badgesForFilename } from "@/lib/badges";
 import { prisma } from "@/lib/db";
 import { getEnv, MB } from "@/lib/env";
-import { planAssociations, resolveAssociations, type Candidate } from "@/lib/files/matching";
-import { normalizeMatchKey, parseFilename } from "@/lib/files/naming";
+import { pairPreviewsLoosely, planAssociations, resolveAssociations } from "@/lib/files/matching";
+import { platformFolder } from "@/lib/files/import-layout";
+import { nextFreeName, normalizeMatchKey, parseFilename } from "@/lib/files/naming";
 import { defaultCategoryFor, fileTypeForName, sniffMatches } from "@/lib/files/types";
 import { newId } from "@/lib/ids";
 import { notifyUsers } from "@/lib/notifications";
 import { canEditCreative, hasApplicationAccess, type Actor } from "@/lib/permissions";
 import { getSettings } from "@/lib/settings";
 import { originalKey } from "@/lib/storage/keys";
-import { deleteObjects, getObjectStream, uploadStream } from "@/lib/storage/r2";
-import { creativeVisibilityWhere } from "@/lib/visibility";
+import { deleteObjects, getObjectStream, uploadStream } from "@/lib/storage/s3";
 import {
   decodeEntryName,
   isEncryptedEntry,
@@ -28,6 +29,8 @@ import {
   isSymlinkEntry,
   normalizeEntryPath,
 } from "@/lib/zip/safety";
+import { applicationKeys, applicationNameFromFolder } from "@/server/services/applications";
+import { listBadges } from "@/server/services/badges";
 import { attachFile, createCreativeRecord } from "@/server/services/creatives";
 import { log } from "../log";
 import { iterateEntries, openEntryStream, openZip, readEntryHead } from "../zip";
@@ -162,62 +165,82 @@ export async function analyzeImport(payload: { batchId: string }) {
       zip.close();
     }
 
-    // Folder-name based suggestions for application and campaign.
-    const apps = (await prisma.application.findMany({ where: { status: "ACTIVE" }, select: { id: true, name: true, slug: true } })).filter((a) =>
-      hasApplicationAccess(actor, a.id),
-    );
+    // Platform (application) and campaign from folder names.
+    const allApps = await prisma.application.findMany({ select: { id: true, name: true, slug: true, status: true } });
+    const apps = allApps.filter((a) => a.status === "ACTIVE" && hasApplicationAccess(actor, a.id));
     const campaigns = await prisma.campaign.findMany({
       where: { applicationId: { in: apps.map((a) => a.id) }, status: { not: "ARCHIVED" } },
       select: { id: true, name: true, slug: true, applicationId: true },
     });
-    const appKeys = apps.map((a) => ({ id: a.id, keys: new Set([normalizeMatchKey(a.name), normalizeMatchKey(a.slug)]) }));
+    const appKeys = apps.map((a) => ({ id: a.id, keys: applicationKeys(a) }));
+    const badges = await listBadges();
     const campaignKeys = campaigns.map((c) => ({ ...c, keys: new Set([normalizeMatchKey(c.name), normalizeMatchKey(c.slug)]) }));
 
     const accepted = entries.filter((e) => !e.rejectReason);
     const enriched = accepted.map((e) => {
       const segKeys = e.segments.map(normalizeMatchKey);
-      const suggestedApp = appKeys.find((a) => segKeys.some((k) => a.keys.has(k)))?.id ?? null;
-      const applicationId = suggestedApp ?? batch.applicationId;
-      const suggestedCampaign =
-        campaignKeys.find((c) => c.applicationId === applicationId && segKeys.some((k) => c.keys.has(k)))?.id ?? null;
+      const folder = platformFolder(e.segments);
+      let suggestedApp: string | null = null;
+      let newApplicationName: string | null = null;
+      let platformNote: string | null = null;
+      if (folder?.platform) {
+        const key = normalizeMatchKey(folder.platform);
+        suggestedApp = appKeys.find((a) => a.keys.has(key))?.id ?? null;
+        if (!suggestedApp) {
+          const known = allApps.find((a) => applicationKeys(a).has(key));
+          if (known) platformNote = `“${known.name}” is disabled or not accessible to you; the default application is used.`;
+          else newApplicationName = applicationNameFromFolder(folder.platform);
+        }
+      } else {
+        suggestedApp = appKeys.find((a) => segKeys.some((k) => a.keys.has(k)))?.id ?? null;
+      }
+      const applicationId = newApplicationName ? null : (suggestedApp ?? batch.applicationId);
+      const suggestedCampaign = applicationId
+        ? (campaignKeys.find((c) => c.applicationId === applicationId && segKeys.some((k) => c.keys.has(k)))?.id ?? null)
+        : null;
       const campaignId = suggestedCampaign ?? (applicationId === batch.applicationId ? batch.campaignId : null);
       const parsed = parseFilename(e.filename);
       const def = fileTypeForName(e.filename)!;
-      return { ...e, parsed, def, applicationId, campaignId, suggestedApp, suggestedCampaign };
+      const category = (folder?.category ?? defaultCategoryFor(def.mediaType)) as CreativeCategory;
+      // Grouping key for the platform, including platforms created on confirmation.
+      const platformKey = applicationId ?? `new:${normalizeMatchKey(newApplicationName!)}`;
+      return { ...e, parsed, def, applicationId, newApplicationName, platformKey, platformNote, campaignId, suggestedApp, suggestedCampaign, category };
     });
 
-    // Full/preview pairing and matches against existing creatives.
-    const matchKeys = [...new Set(enriched.map((e) => e.parsed.matchKey))];
-    const existing = matchKeys.length
-      ? await prisma.creative.findMany({
-          where: {
-            AND: [
-              creativeVisibilityWhere(actor),
-              { applicationId: { in: [...new Set(enriched.map((e) => e.applicationId))] }, matchKey: { in: matchKeys }, status: { not: "ARCHIVED" } },
-            ],
-          },
-          select: { id: true, name: true, status: true, applicationId: true, matchKey: true, createdById: true, files: { select: { versionType: true } } },
-        })
-      : [];
-    const candidates: Candidate[] = existing
-      .filter((c) => canEditCreative(actor, c))
-      .map((c) => ({
-        creativeId: c.id,
-        applicationId: c.applicationId,
-        matchKey: c.matchKey,
-        name: c.name,
-        status: c.status,
-        hasFull: c.files.some((f) => f.versionType === "FULL"),
-      }));
-    const suggestions = planAssociations(
-      enriched.map((e) => ({ clientId: e.tmpId, applicationId: e.applicationId, matchKey: e.parsed.matchKey, versionType: e.parsed.detectedVersionType })),
-      candidates,
+    // Imports always create new creatives: files are paired with each other
+    // (full + preview), never attached to creatives already in the library.
+    const planFiles = pairPreviewsLoosely(
+      enriched.map((e) => ({ clientId: e.tmpId, applicationId: e.platformKey, matchKey: e.parsed.matchKey, versionType: e.parsed.detectedVersionType })),
     );
+    const matchKeyOf = new Map(planFiles.map((f) => [f.clientId, f.matchKey]));
+    const suggestions = planAssociations(planFiles, []);
     // Undecided items default to their own new creative but are flagged for review.
     const associations = new Map(
       enriched.map((e) => [e.tmpId, suggestions.get(e.tmpId)?.association ?? { kind: "new" as const, groupKey: e.tmpId }]),
     );
     const resolved = resolveAssociations(associations);
+
+    // Names already used in each application: an existing "Spot" makes this one "Spot (2)".
+    const appIds = [...new Set(enriched.flatMap((e) => (e.applicationId ? [e.applicationId] : [])))];
+    const existingNames = appIds.length
+      ? await prisma.creative.findMany({ where: { applicationId: { in: appIds } }, select: { applicationId: true, name: true } })
+      : [];
+    const taken = new Map<string, Set<string>>();
+    for (const c of existingNames) {
+      const set = taken.get(c.applicationId) ?? new Set<string>();
+      set.add(c.name.toLowerCase());
+      taken.set(c.applicationId, set);
+    }
+    const creativeNames = new Map<string, string>();
+    for (const e of enriched) {
+      const r = resolved.get(e.tmpId);
+      if (r?.kind !== "new" || r.groupKey !== e.tmpId) continue; // only the leader of a new creative
+      const set = taken.get(e.platformKey) ?? new Set<string>();
+      const name = nextFreeName(e.parsed.displayName, set);
+      set.add(name.toLowerCase());
+      taken.set(e.platformKey, set);
+      creativeNames.set(e.tmpId, name);
+    }
 
     await prisma.$transaction(async (tx) => {
       await tx.importItem.deleteMany({ where: { batchId: batch.id } });
@@ -248,6 +271,11 @@ export async function analyzeImport(payload: { batchId: string }) {
         }
         const suggestion = suggestions.get(en.tmpId);
         const r = resolved.get(en.tmpId);
+        const notes = [
+          en.newApplicationName ? `New platform “${en.newApplicationName}” will be created when you confirm.` : null,
+          en.platformNote,
+          suggestion?.reason ?? null,
+        ].filter(Boolean);
         return {
           id: en.tmpId,
           batchId: batch.id,
@@ -259,18 +287,20 @@ export async function analyzeImport(payload: { batchId: string }) {
           extension: en.parsed.extension,
           mediaType: en.def.mediaType,
           versionType: en.parsed.detectedVersionType as VersionType,
-          matchKey: en.parsed.matchKey,
+          matchKey: matchKeyOf.get(en.tmpId) ?? en.parsed.matchKey,
           groupKey: r?.kind === "new" ? r.groupKey : en.tmpId,
-          targetCreativeId: r?.kind === "existing" ? r.creativeId : null,
-          creativeName: en.parsed.displayName,
-          category: defaultCategoryFor(en.def.mediaType) as CreativeCategory,
+          targetCreativeId: null,
+          creativeName: creativeNames.get(en.tmpId) ?? en.parsed.displayName,
+          category: en.category,
           suggestedApplicationId: en.suggestedApp,
           suggestedCampaignId: en.suggestedCampaign,
           applicationId: en.applicationId,
+          newApplicationName: en.newApplicationName,
           campaignId: en.campaignId,
+          badgeIds: badgesForFilename(badges, en.filename).map((b) => b.id),
           include: true,
           needsReview: suggestion?.needsDecision ?? false,
-          note: suggestion?.reason ?? null,
+          note: notes.join(" ") || null,
           status: "PENDING" as const,
         };
       });
@@ -304,7 +334,7 @@ export async function analyzeImport(payload: { batchId: string }) {
 }
 
 /**
- * Extract the confirmed entries straight from the archive to R2 (byte-for-byte),
+ * Extract the confirmed entries straight from the archive to storage (byte-for-byte),
  * then register creatives and versions exactly as the review defined them.
  */
 export async function runImport(payload: { batchId: string }) {
@@ -335,6 +365,7 @@ export async function runImport(payload: { batchId: string }) {
         groups.set(key, [...(groups.get(key) ?? []), item]);
       }
 
+      const existingBadgeIds = new Set((await listBadges()).map((b) => b.id));
       let imported = 0;
       let failed = 0;
       for (const [groupKey, items] of groups) {
@@ -361,6 +392,7 @@ export async function runImport(payload: { batchId: string }) {
                 matchKey: leader.matchKey,
                 mediaType: leader.mediaType,
                 createdById: actor.id,
+                badgeIds: [...new Set(items.flatMap((i) => i.badgeIds))].filter((id) => existingBadgeIds.has(id)),
               }),
             );
             creativeId = created.id;

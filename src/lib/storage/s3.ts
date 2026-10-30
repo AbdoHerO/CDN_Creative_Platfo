@@ -18,7 +18,7 @@ import { getEnv, getStorageConfig, type StorageConfig } from "@/lib/env";
 import { contentDisposition } from "@/lib/files/naming";
 
 /**
- * Cloudflare R2 access through its S3-compatible API.
+ * Object storage access through the S3 API (RustFS, or any S3-compatible server).
  *
  * - Credentials never leave the server. Browsers only receive short-lived
  *   presigned URLs scoped to a single object/part.
@@ -28,7 +28,7 @@ import { contentDisposition } from "@/lib/files/naming";
 export class StorageNotConfiguredError extends Error {
   constructor() {
     super(
-      "File storage is not configured. Set R2_ACCOUNT_ID (or R2_ENDPOINT), R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET.",
+      "File storage is not configured. Set URL_RUSTFS, BUCKET_NAME, ACCESS_KEY and SECRET_KEY.",
     );
     this.name = "StorageNotConfiguredError";
   }
@@ -43,10 +43,12 @@ function storage() {
   const s3 = new S3Client({
     region: config.region,
     endpoint: config.endpoint,
-    forcePathStyle: config.forcePathStyle,
+    // RustFS serves buckets path-style (https://host/bucket/key): one storage
+    // origin for the Content-Security-Policy, no wildcard DNS needed.
+    forcePathStyle: true,
     credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
-    // R2 does not support the SDK's default CRC32 request checksums on presigned
-    // URLs; only send checksums when an operation strictly requires them.
+    // Presigned browser uploads cannot carry the SDK's default CRC32 checksums;
+    // only send checksums when an operation strictly requires them.
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
   });
@@ -77,7 +79,7 @@ export async function presignPutObject(key: string, contentType: string, expires
 export async function createMultipartUpload(key: string, contentType: string): Promise<string> {
   const { s3, config } = storage();
   const res = await s3.send(new CreateMultipartUploadCommand({ Bucket: config.bucket, Key: key, ContentType: contentType }));
-  if (!res.UploadId) throw new Error("R2 did not return an upload id");
+  if (!res.UploadId) throw new Error("Storage did not return an upload id");
   return res.UploadId;
 }
 
@@ -166,7 +168,7 @@ export async function putObject(key: string, body: Buffer | Uint8Array, contentT
   );
 }
 
-/** Stream an arbitrarily large body to R2 using managed multipart upload. */
+/** Stream an arbitrarily large body to storage using managed multipart upload. */
 export async function uploadStream(key: string, body: Readable, contentType: string) {
   const { s3, config } = storage();
   const partSize = getEnv().UPLOAD_PART_SIZE_MB * 1024 * 1024;

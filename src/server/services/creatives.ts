@@ -7,6 +7,8 @@ import { canDeleteCreative, canEditCreative, type Actor } from "@/lib/permission
 import type { RequestMeta } from "@/lib/request";
 import { getSettings } from "@/lib/settings";
 import { VERSION_TYPE_LABELS } from "@/lib/constants";
+import { nextFreeName } from "@/lib/files/naming";
+import { formatBytes } from "@/lib/format";
 import { ensureTags, normalizeKeywords } from "./tags";
 
 /**
@@ -45,17 +47,34 @@ export type NewCreativeInput = {
   channels?: Channel[];
   keywords?: string[];
   tags?: string[];
+  badgeIds?: string[];
   matchKey: string;
   mediaType: MediaType;
   createdById: string;
 };
+
+/**
+ * Name for a new creative that is unique within its application: an existing
+ * "Spot" makes the next one "Spot (2)", then "Spot (3)"… (case-insensitive).
+ */
+export async function uniqueCreativeName(db: Db, applicationId: string, name: string) {
+  const base = name.trim().slice(0, 190) || "Untitled creative";
+  const existing = await db.creative.findMany({
+    where: {
+      applicationId,
+      OR: [{ name: { equals: base, mode: "insensitive" } }, { name: { startsWith: `${base} (`, mode: "insensitive" } }],
+    },
+    select: { name: true },
+  });
+  return nextFreeName(base, new Set(existing.map((c) => c.name.toLowerCase())));
+}
 
 /** Create the logical creative before its first file finishes uploading. */
 export async function createCreativeRecord(tx: Tx, input: NewCreativeInput) {
   const tagIds = await ensureTags(tx, input.tags ?? []);
   return tx.creative.create({
     data: {
-      name: input.name.trim().slice(0, 200) || "Untitled creative",
+      name: await uniqueCreativeName(tx, input.applicationId, input.name),
       applicationId: input.applicationId,
       campaignId: input.campaignId ?? null,
       category: input.category,
@@ -66,6 +85,7 @@ export async function createCreativeRecord(tx: Tx, input: NewCreativeInput) {
       mediaType: input.mediaType,
       createdById: input.createdById,
       tags: { create: tagIds.map((tagId) => ({ tagId })) },
+      badges: { create: [...new Set(input.badgeIds ?? [])].map((badgeId) => ({ badgeId })) },
     },
   });
 }
@@ -160,37 +180,123 @@ export async function attachFile(tx: Tx, input: AttachFileInput, actor: { id: st
 
   // A new full version invalidates a previous approval (configurable).
   if (input.versionType === "FULL" && creative.status === "APPROVED" && versionNumber > 1) {
-    const settings = await getSettings(tx);
-    if (settings.resetApprovalOnNewVersion) {
-      await tx.creative.update({ where: { id: creative.id }, data: { status: "DRAFT", approvedAt: null } });
-      await tx.validation.create({
-        data: {
-          creativeId: creative.id,
-          action: "RESET_NEW_VERSION",
-          fromStatus: "APPROVED",
-          toStatus: "DRAFT",
-          reviewerId: actor.id,
-          comment: `Full version v${versionNumber} uploaded; the creative must be validated again.`,
-          fileId: file.id,
-        },
-      });
-      await logActivity(
-        {
-          actorId: actor.id,
-          action: "CREATIVE_STATUS_CHANGED",
-          entityType: "CREATIVE",
-          entityId: creative.id,
-          creativeId: creative.id,
-          applicationId: creative.applicationId,
-          summary: `“${creative.name}” returned to draft because a new full version was uploaded`,
-          metadata: { from: "APPROVED", to: "DRAFT" },
-          meta,
-        },
-        tx,
-      );
-    }
+    await resetApproval(tx, creative, file.id, `Full version v${versionNumber} uploaded`, "a new full version was uploaded", actor, meta);
   }
 
+  await enqueueJob("PROCESS_FILE", { fileId: file.id }, { db: tx });
+  return file;
+}
+
+/** Return an approved creative to draft after its full file changed (when enabled in Settings). */
+async function resetApproval(
+  tx: Tx,
+  creative: { id: string; name: string; applicationId: string },
+  fileId: string,
+  what: string,
+  because: string,
+  actor: { id: string; name: string },
+  meta?: RequestMeta | null,
+) {
+  const settings = await getSettings(tx);
+  if (!settings.resetApprovalOnNewVersion) return;
+  await tx.creative.update({ where: { id: creative.id }, data: { status: "DRAFT", approvedAt: null } });
+  await tx.validation.create({
+    data: {
+      creativeId: creative.id,
+      action: "RESET_NEW_VERSION",
+      fromStatus: "APPROVED",
+      toStatus: "DRAFT",
+      reviewerId: actor.id,
+      comment: `${what}; the creative must be validated again.`,
+      fileId,
+    },
+  });
+  await logActivity(
+    {
+      actorId: actor.id,
+      action: "CREATIVE_STATUS_CHANGED",
+      entityType: "CREATIVE",
+      entityId: creative.id,
+      creativeId: creative.id,
+      applicationId: creative.applicationId,
+      summary: `“${creative.name}” returned to draft because ${because}`,
+      metadata: { from: "APPROVED", to: "DRAFT" },
+      meta,
+    },
+    tx,
+  );
+}
+
+/**
+ * Replace a stored file with a newly uploaded one: the old file record and its
+ * objects (original, thumbnail, display rendition) are deleted so the space is
+ * freed, and the new file takes its place with the same version number and
+ * current flag. Falls back to a normal new version if the old file is gone.
+ */
+export async function replaceFile(
+  tx: Tx,
+  input: AttachFileInput & { replacesFileId: string },
+  actor: { id: string; name: string },
+  meta?: RequestMeta | null,
+) {
+  await lockCreative(tx, input.creativeId);
+  const old = await tx.creativeFile.findUnique({ where: { id: input.replacesFileId } });
+  if (!old || old.creativeId !== input.creativeId) return attachFile(tx, input, actor, meta);
+  const creative = await tx.creative.findUniqueOrThrow({
+    where: { id: input.creativeId },
+    select: { id: true, name: true, status: true, applicationId: true },
+  });
+
+  await tx.creativeFile.delete({ where: { id: old.id } });
+  const file = await tx.creativeFile.create({
+    data: {
+      id: input.fileId,
+      creativeId: input.creativeId,
+      versionType: old.versionType,
+      versionNumber: old.versionNumber,
+      isCurrent: old.isCurrent,
+      label: old.label,
+      originalFilename: input.originalFilename,
+      storageKey: input.storageKey,
+      sizeBytes: input.sizeBytes,
+      mimeType: input.mimeType,
+      extension: input.extension,
+      mediaType: input.mediaType,
+      checksumSha256: input.checksumSha256 ?? null,
+      integrityStatus: input.checksumSha256 ? "PENDING" : "UNVERIFIED",
+      uploadedById: input.uploadedById,
+    },
+  });
+  await refreshCreativeMediaType(tx, input.creativeId);
+  await tx.creative.update({ where: { id: input.creativeId }, data: { updatedAt: new Date() } });
+  await enqueueJob(
+    "DELETE_OBJECTS",
+    { keys: [old.storageKey, old.thumbnailKey, old.displayKey].filter(Boolean) as string[], reason: `file ${old.id} replaced` },
+    { db: tx },
+  );
+  await logActivity(
+    {
+      actorId: actor.id,
+      action: "FILE_REPLACED",
+      entityType: "FILE",
+      entityId: file.id,
+      creativeId: creative.id,
+      applicationId: creative.applicationId,
+      summary: `${actor.name} replaced ${VERSION_TYPE_LABELS[old.versionType].toLowerCase()} v${old.versionNumber} of “${creative.name}”: ${old.originalFilename} (${formatBytes(old.sizeBytes)}) → ${input.originalFilename} (${formatBytes(input.sizeBytes)})`,
+      metadata: {
+        replacedFileId: old.id,
+        fileId: file.id,
+        versionType: old.versionType,
+        freedBytes: Number(old.sizeBytes),
+        sizeBytes: Number(input.sizeBytes),
+      },
+      meta,
+    },
+    tx,
+  );
+  if (old.versionType === "FULL" && old.isCurrent && creative.status === "APPROVED") {
+    await resetApproval(tx, creative, file.id, `Full version v${old.versionNumber} replaced`, "its full version was replaced", actor, meta);
+  }
   await enqueueJob("PROCESS_FILE", { fileId: file.id }, { db: tx });
   return file;
 }
@@ -270,7 +376,7 @@ export async function updateCreativeMetadata(actor: ActorWithName, creativeId: s
   });
 }
 
-/** Permanently delete a creative; its objects are removed from R2 by the worker. */
+/** Permanently delete a creative; its objects are removed from storage by the worker. */
 export async function deleteCreative(actor: ActorWithName, creativeId: string, meta?: RequestMeta | null) {
   return prisma.$transaction(async (tx) => {
     await lockCreative(tx, creativeId);

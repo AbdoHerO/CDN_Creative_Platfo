@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { prisma } from "@/lib/db";
 import { rateLimit } from "@/lib/rate-limit";
-import { trySignedGetUrl } from "@/lib/storage/r2";
+import { trySignedGetUrl } from "@/lib/storage/s3";
 import { campaignScope, applicationScope, creativeVisibilityWhere } from "@/lib/visibility";
 import { searchWhere } from "@/server/queries/library";
 

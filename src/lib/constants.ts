@@ -28,6 +28,7 @@ export const CATEGORY_LABELS: Record<CreativeCategory, string> = {
   BANNER: "Banner",
   PROMOTIONAL_IMAGE: "Promotional image",
   CAMPAIGN_VISUAL: "Campaign visual",
+  DOCUMENT: "Document (PDF)",
   OTHER: "Other",
 };
 

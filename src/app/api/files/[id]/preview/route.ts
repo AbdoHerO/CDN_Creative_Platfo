@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { signedGetUrl } from "@/lib/storage/r2";
+import { signedGetUrl } from "@/lib/storage/s3";
 import { apiError, apiUser } from "@/server/api-utils";
 import { loadViewableFile } from "@/server/services/file-access";
 

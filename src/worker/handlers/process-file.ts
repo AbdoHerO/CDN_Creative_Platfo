@@ -11,13 +11,13 @@ import { prisma } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 import { notifyUsers } from "@/lib/notifications";
 import { displayKey, thumbnailKey } from "@/lib/storage/keys";
-import { getObjectStream, putObject } from "@/lib/storage/r2";
+import { getObjectStream, putObject } from "@/lib/storage/s3";
 import { extractMedia } from "../media";
 import { log } from "../log";
 
 /**
  * Post-upload processing for one CreativeFile:
- *  1. stream the original from R2 to a temp file while computing SHA-256,
+ *  1. stream the original from storage to a temp file while computing SHA-256,
  *  2. compare with the checksum computed in the browser (integrity),
  *  3. extract metadata (resolution, duration, codecs, pages…),
  *  4. upload a thumbnail / display rendition as *separate* objects.

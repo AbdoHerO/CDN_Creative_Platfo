@@ -24,7 +24,7 @@ export function ReconcileButton({ disabled }: { disabled?: boolean }) {
         })
       }
     >
-      {pending ? <Spinner /> : <RefreshCw />} Reconcile with R2
+      {pending ? <Spinner /> : <RefreshCw />} Reconcile with storage
     </Button>
   );
 }

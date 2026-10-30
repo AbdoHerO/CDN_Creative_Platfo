@@ -2,7 +2,7 @@
 //
 // Design notes
 // - Media binaries are NEVER stored here. Originals and derived assets (thumbnails,
-//   display renditions) live in Cloudflare R2; this schema only stores their keys and
+//   display renditions) live in RustFS (S3-compatible storage); this schema only stores their keys and
 //   metadata.
 // - A Creative is the logical asset. Each uploaded file is a CreativeFile ("version")
 //   attached to exactly one Creative, so full + preview versions of the same video
@@ -179,9 +179,9 @@ model Campaign {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
-  creatives    Creative[]
-  tags         CampaignTag[]
-  importBatch  ImportBatch[]
+  creatives   Creative[]
+  tags        CampaignTag[]
+  importBatch ImportBatch[]
 
   @@unique([applicationId, slug])
   @@index([applicationId, status])
@@ -207,6 +207,8 @@ enum CreativeCategory {
   BANNER
   PROMOTIONAL_IMAGE
   CAMPAIGN_VISUAL
+  /// PDFs and other documents (guides, storyboards, technical sheets…).
+  DOCUMENT
   OTHER
 }
 
@@ -267,6 +269,7 @@ model Creative {
 
   files          CreativeFile[]
   tags           CreativeTag[]
+  badges         CreativeBadge[]
   validations    Validation[]
   activities     ActivityLog[]
   notifications  Notification[]
@@ -302,7 +305,7 @@ enum IntegrityStatus {
   UNVERIFIED
 }
 
-/// One stored file (a version) of a creative. The original object in R2 is never
+/// One stored file (a version) of a creative. The original object in storage is never
 /// modified; thumbnails/display renditions are separate derived objects.
 model CreativeFile {
   id               String           @id @default(cuid())
@@ -374,6 +377,33 @@ model CreativeTag {
 
   @@id([creativeId, tagId])
   @@index([tagId])
+}
+
+/// Visual label shown on creatives (e.g. "Motion graphique", "Higgsfield", "3D").
+/// Managed by admins and managers; assigned from the creative page.
+model Badge {
+  id        String          @id @default(cuid())
+  name      String          @unique
+  slug      String          @unique
+  /// Hex colour, e.g. #8B5CF6
+  color     String          @default("#6366F1")
+  sortOrder Int             @default(0)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  creatives CreativeBadge[]
+
+  @@index([sortOrder])
+}
+
+model CreativeBadge {
+  creativeId String
+  badgeId    String
+  creative   Creative @relation(fields: [creativeId], references: [id], onDelete: Cascade)
+  badge      Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@id([creativeId, badgeId])
+  @@index([badgeId])
 }
 
 model CampaignTag {
@@ -448,6 +478,7 @@ enum ActivityAction {
   FILE_DELETED
   FILE_MOVED
   FILE_SET_CURRENT
+  FILE_REPLACED
   FILE_DOWNLOADED
   FILE_INTEGRITY_FAILED
   APPLICATION_CREATED
@@ -560,7 +591,7 @@ enum UploadStatus {
   EXPIRED
 }
 
-/// Tracks a direct-to-R2 upload so it can be resumed, cancelled, verified and
+/// Tracks a direct-to-storage upload so it can be resumed, cancelled, verified and
 /// cleaned up. The CreativeFile id is reserved up-front so the storage key is stable.
 model UploadSession {
   id             String        @id @default(cuid())
@@ -570,7 +601,7 @@ model UploadSession {
   mode           UploadMode
   status         UploadStatus  @default(UPLOADING)
   storageKey     String        @unique
-  /// R2 multipart upload id (MULTIPART mode only).
+  /// S3 multipart upload id (MULTIPART mode only).
   uploadId       String?
   filename       String
   sizeBytes      BigInt
@@ -585,6 +616,8 @@ model UploadSession {
   fileId         String?       @unique
   versionType    VersionType?
   label          String?
+  /// File to delete and replace once this upload completes (replace instead of new version).
+  replacesFileId String?
   importBatchId  String?       @unique
   importBatch    ImportBatch?  @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
   errorMessage   String?
@@ -609,28 +642,28 @@ enum ImportStatus {
 }
 
 model ImportBatch {
-  id               String         @id @default(cuid())
+  id               String       @id @default(cuid())
   createdById      String?
-  createdBy        User?          @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy        User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
   /// Default application/campaign chosen by the user before analysis.
   applicationId    String
-  application      Application    @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  application      Application  @relation(fields: [applicationId], references: [id], onDelete: Restrict)
   campaignId       String?
-  campaign         Campaign?      @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaign         Campaign?    @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   archiveFilename  String
   archiveKey       String?
   archiveSizeBytes BigInt
-  /// Keep the original archive in R2 as an import record.
-  keepArchive      Boolean        @default(false)
-  status           ImportStatus   @default(UPLOADING)
+  /// Keep the original archive in storage as an import record.
+  keepArchive      Boolean      @default(false)
+  status           ImportStatus @default(UPLOADING)
   errorMessage     String?
-  totalEntries     Int            @default(0)
-  importedCount    Int            @default(0)
-  skippedCount     Int            @default(0)
-  failedCount      Int            @default(0)
-  totalBytes       BigInt         @default(0)
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  totalEntries     Int          @default(0)
+  importedCount    Int          @default(0)
+  skippedCount     Int          @default(0)
+  failedCount      Int          @default(0)
+  totalBytes       BigInt       @default(0)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
   completedAt      DateTime?
 
   items         ImportItem[]
@@ -670,9 +703,13 @@ model ImportItem {
   suggestedApplicationId String?
   suggestedCampaignId    String?
   applicationId          String?
+  /// Platform folder with no matching application: created when the import is confirmed.
+  newApplicationName     String?
   campaignId             String?
   /// Existing creative to attach this file to (instead of creating a new one).
   targetCreativeId       String?
+  /// Badges for the creative this file creates (pre-filled from the filename, editable in the review).
+  badgeIds               String[]         @default([])
   include                Boolean          @default(true)
   /// Ambiguous association detected during analysis; the user must decide.
   needsReview            Boolean          @default(false)
@@ -730,7 +767,7 @@ enum SnapshotStatus {
   FAILED
 }
 
-/// Result of reconciling database records with the actual objects in R2.
+/// Result of reconciling database records with the actual objects in the bucket.
 model StorageSnapshot {
   id             String         @id @default(cuid())
   status         SnapshotStatus @default(RUNNING)

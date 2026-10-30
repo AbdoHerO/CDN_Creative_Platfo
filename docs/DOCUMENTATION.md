@@ -23,7 +23,7 @@ This document covers everything: what the platform does, how each screen works, 
 9. [Security](#9-security)
 10. [Installation and local setup](#10-installation-and-local-setup)
 11. [Environment variables](#11-environment-variables)
-12. [Cloudflare R2 setup](#12-cloudflare-r2-setup)
+12. [RustFS storage setup](#12-rustfs-storage-setup)
 13. [Production deployment](#13-production-deployment)
 14. [Operations and maintenance](#14-operations-and-maintenance)
 15. [Testing](#15-testing)
@@ -42,10 +42,11 @@ This document covers everything: what the platform does, how each screen works, 
 | Need | How Creative Hub handles it |
 |---|---|
 | One place for every creative | A searchable library across all applications, campaigns, categories, channels and tags. |
-| Never lose quality | Files go **straight from the browser to Cloudflare R2**. They are never compressed, resized or re-encoded, and a SHA-256 checksum proves the stored file is byte-identical to the uploaded one. |
+| Never lose quality | Files go **straight from the browser to RustFS**, a self-hosted S3-compatible object store. They are never compressed, resized or re-encoded, and a SHA-256 checksum proves the stored file is byte-identical to the uploaded one. |
 | Very large files | Multipart uploads (parallel parts, automatic retry, cancel, resume after a crash). The default limit is 20 GB per file. |
-| Full and lightweight versions | `name.mp4` and `name_preview.mp4` are recognised and linked to the **same creative** automatically. |
-| Bulk upload | ZIP archives are checked for safety on the server, then reviewed and confirmed before anything is imported. |
+| Full and lightweight versions | `name.mp4` and `name_preview.mp4` (or `name-preview.mp4`) are recognised and linked to the **same creative** automatically; the preview is the lite version of the video. |
+| Bulk upload | Zip a `data_creatives` folder with one folder per platform; it is checked for safety, reviewed and confirmed before anything is imported. A template ZIP can be downloaded. |
+| Labels | Coloured **badges** (Motion graphique, Higgsfield, 3D, Sans miniature, …) shown on every creative and switched on with one click. |
 | Quality control | A validation workflow (Draft → Pending → In review → Approved / Declined) with required decline reasons and a full history. |
 | Access control | Four roles (Admin, Manager, Creator, Viewer), optional per-application restrictions, all enforced on the server. |
 | Traceability | An audit log of every sign-in, upload, edit, status change, download and admin change, exportable to CSV. |
@@ -54,11 +55,11 @@ This document covers everything: what the platform does, how each screen works, 
 
 - **Web app:** Next.js 16 (App Router, Server Components, Server Actions), React 19, TypeScript, Tailwind CSS v4, shadcn/ui, Lucide icons, React Hook Form + Zod.
 - **Database:** PostgreSQL 14+ through Prisma 7 (`@prisma/adapter-pg`).
-- **File storage:** Cloudflare R2 through its S3-compatible API (`@aws-sdk/client-s3`, presigned URLs).
+- **File storage:** RustFS (self-hosted, S3-compatible) through the S3 API (`@aws-sdk/client-s3`, presigned URLs).
 - **Background worker:** a separate Node.js process that uses a PostgreSQL job queue, plus ffmpeg/ffprobe, sharp, poppler (`pdftoppm`, `pdfinfo`) and yauzl for ZIP files.
 - **Tests:** Vitest (unit and integration tests against real services) and Playwright (end-to-end).
 
-The system runs as **two processes**, the web app and the worker, that share one PostgreSQL database and one R2 bucket. No Redis or other infrastructure is needed.
+The system runs as **two processes**, the web app and the worker, that share one PostgreSQL database and one RustFS bucket. No Redis or other infrastructure is needed.
 
 ---
 
@@ -71,10 +72,10 @@ npm install
 ```
 
 ```bash
-cp .env.example .env
+cp .env.dev.example .env.dev
 ```
 
-Edit `.env`: set `DATABASE_URL`, `APP_URL`, the `R2_*` variables (or a local S3 server, see [10.3](#103-file-storage-for-development)) and `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (at least 10 characters).
+Edit `.env.dev`: set `DATABASE_URL`, `APP_URL`, the RustFS variables `URL_RUSTFS`, `BUCKET_NAME`, `ACCESS_KEY` and `SECRET_KEY` (see [10.3](#103-file-storage-for-development)) and `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (at least 10 characters).
 
 ```bash
 npm run db:migrate
@@ -110,9 +111,10 @@ Open <http://localhost:3000> and sign in with the seeded admin account.
 | **Campaign** | An optional grouping of creatives inside one application, with dates, a status and tags. |
 | **Creative** | A logical asset, for example "Summer promo spot 30s". It holds the metadata (name, description, application, campaign, category, channels, tags, keywords) and the validation status. |
 | **File / version** | One stored object attached to a creative. A creative can have many versions. |
-| **Version type** | `FULL` (the master), `PREVIEW` (a lightweight copy, detected from the `_preview` suffix) or `VARIANT` (another cut or format). Each type has its own numbered history (v1, v2, …) and one **current** version. |
+| **Version type** | `FULL` (the master), `PREVIEW` (the lite version, detected from the word `preview` in the file name) or `VARIANT` (another cut or format). Each type has its own numbered history (v1, v2, …) and one **current** version. |
 | **Preview-only creative** | A creative that has only a preview so far, because the preview was uploaded before its full version. It is linked automatically when the full version arrives. |
 | **Match key** | The normalised base name used to pair files: `Summer_Promo_preview.MP4` → `summer promo`. |
+| **Badge** | A coloured label on a creative, such as *Motion graphique*, *Higgsfield*, *3D* or *Sans miniature*. Admins and managers manage the list in **Settings → Badges**. |
 | **Status** | `DRAFT`, `PENDING`, `IN_REVIEW`, `APPROVED`, `DECLINED` or `ARCHIVED` (see [4.9](#49-validation-workflow)). |
 | **Category** | Marketing video, Advertising video, Social media post, Banner, Promotional image, Campaign visual, Other. |
 | **Channels** | Where a creative is used: Instagram, Facebook, LinkedIn, TikTok, YouTube, X, WhatsApp, Website, Email, Display ads, In-app, Print, Other. |
@@ -166,12 +168,17 @@ All figures come live from the database and respect your permissions (a viewer o
 
 `/library` lists every creative you can see.
 
-- **Grid or list view.** Each item shows the thumbnail, name, application, campaign, category, format, date, uploader, status and number of versions. Your choice is remembered.
+- **Filter banner** at the top, with live counts that take the other active filters into account:
+  - **Platform** chips: *All platforms* or one platform (brand colour and initials).
+  - **Validation:** *All*, *Approved*, *Not yet* (draft, pending or in review) or *Declined*. Hidden for viewers, who only see approved creatives, and on the Approved / Declined / Archived pages.
+  - **Lite version:** *All*, *With preview* or *Without preview*.
+- **Reels grid or list view.** The grid shows tall 9:16 cards, like short-video ad libraries: the creative fitted on a blurred backdrop, with the platform, status, badges, name, duration, format and size over a gradient. A **LITE** tag means the creative has a preview version. **Hovering a video card plays a muted clip** (the first 6 seconds, looped) of the lite version when there is one, otherwise of the video itself. Clicking opens the creative. The list view shows the same information in a table. Your choice is remembered.
 - **Search** across names, descriptions, keywords, tags, campaign names, application names and original filenames. Every word must match (`summer banner` finds creatives that match both words).
-- **Filters**, which can all be combined: application, campaign, media type (video, image, document, audio), category, status, tag, uploader, file format (`mp4`, `png`, …) and a date range.
+- **Badges** appear on each thumbnail (and under the name in list view).
+- **Filters**, which can all be combined: application, campaign, media type (video, image, document, audio), category, **badge**, status, tag, uploader, file format (`mp4`, `png`, …) and a date range.
 - **Sort:** newest first, oldest first, alphabetical, recently updated, largest files, smallest files.
 - **Pagination:** 24, 48 or 96 items per page (the default is set by an admin).
-- **Show preview versions:** off by default, so the library shows one row per creative (its current full version). When it is on, preview files appear as their own items labelled **PREVIEW**. The setting is saved per user.
+- **Show preview versions:** off by default, so the library shows one row per creative (its current full version). When it is on, preview files appear as their own items labelled **PREVIEW · LITE**. The setting is saved per user.
 - Archived creatives are hidden from the library. Use the **Archived** page, or filter by status *Archived*.
 
 Every filter is stored in the URL, so a filtered view can be bookmarked or shared. The parameters are:
@@ -185,6 +192,9 @@ Every filter is stored in the URL, so a filtered view can be bookmarked or share
 | `status` | `status=APPROVED` | A status key |
 | `format` | `format=mp4` | File extension |
 | `tag` | `tag=summer` | Tag slug |
+| `badge` | `badge=higgsfield` | Badge slug |
+| `review` | `review=waiting` | `approved`, `waiting` (not yet approved) or `declined` |
+| `lite` | `lite=without` | `with` or `without` a preview (lite) version |
 | `from`, `to` | `from=2026-01-01` | Upload date range (YYYY-MM-DD) |
 | `sort` | `sort=largest` | `newest`, `oldest`, `name`, `updated`, `largest`, `smallest` |
 | `page`, `size`, `view` | `size=48&view=list` | Page number, page size, `grid` or `list` |
@@ -196,21 +206,25 @@ The **Approved**, **Declined** and **Archived** pages are the same library, fixe
 `/creatives/<id>` shows one creative.
 
 **Viewer.** Files are previewed in the browser and never forced to download:
-- **Video:** built-in player with poster frame, seeking and full screen. If the browser cannot play the format (MKV, AVI, some codecs), the page offers the `_preview` version or a download.
+- **Video:** a custom player with poster frame, big play button, a seek bar showing what is buffered and the time under the pointer, back/forward 10 seconds, volume, playback speed (0.5× to 2×), picture-in-picture and full screen. Controls hide while the video plays and come back when you move the mouse. Keyboard (click the player first): `Space`/`K` play or pause, `←`/`→` 5 seconds, `J`/`L` 10 seconds, `↑`/`↓` volume, `M` mute, `F` full screen; double-click for full screen. If the browser cannot play the format (MKV, AVI, some codecs), the page offers the `_preview` version or a download.
 - **Image:** zoomable viewer (zoom with the buttons or the mouse wheel, drag to pan, fit to screen, actual size 100%, full screen). Formats browsers cannot display (TIFF, HEIC, PSD) are shown through a high-resolution WebP rendition made by the worker. The original is never changed.
 - **PDF:** embedded PDF viewer.
 - **Audio:** audio player.
+
+**Badges.** Under the title. Anyone who may edit the creative clicks **Add badge** / **Edit badges** and ticks badges on or off; the change is saved at once. Admins and managers can also type a new name to create a badge.
 
 **Version selector.** When a creative has several versions, buttons such as **FULL VERSION — 185 MB** and **PREVIEW VERSION — 11 MB** switch the viewer. **Preview** and **Download** always apply to the selected version, and **Download** returns the original bytes with the original filename.
 
 **Metadata panel:** application, campaign, category, channels, tags, keywords, uploader, dates and, for the selected file, original filename, format, size, resolution, duration, frame rate, codecs, bitrate, page count, SHA-256 checksum and integrity status.
 
 **Tabs:**
-- **Versions:** every version of every type, with **Make current version**, **Move to another creative…** and **Delete version** (the last remaining file cannot be deleted).
+- **Versions:** every version of every type, with **Make current version**, **Replace file…**, **Move to another creative…** and **Delete version** (the last remaining file cannot be deleted).
 - **Validation history:** every status change with the reviewer, time, comment, decline reason and the version that was reviewed.
 - **Activity:** the audit trail for this creative.
 
-**Actions** (shown only when you are allowed): workflow actions (submit, approve, decline, …), **Edit** metadata, **Upload new version**, **Archive**, **Restore**, **Delete permanently**.
+**Actions** (shown only when you are allowed): workflow actions (submit, approve, decline, …), **Edit** metadata, **Upload new version**, **Replace file**, **Archive**, **Restore**, **Delete permanently**.
+
+**Replace file** (under the viewer, or in a version's menu) swaps the selected file for another one of the same kind: a video for a video, an image for an image. After you choose the new file, a red warning shows the old and new names and the space that will be freed, and you confirm with **Replace and delete old file**. Once the new file is uploaded and checked, the old file, its thumbnail and display rendition are **deleted from storage**. The new file keeps the same version number (for example *Full v1*), and the activity log records the replacement. Replacing the current full version of an approved creative returns it to draft when **Settings → Platform → Re-validate after a new full version** is on. Use **Upload version** instead when you want to keep the previous file in the history.
 
 When a preview-only creative may belong to an existing full version, a **link card** suggests the match so you can confirm it.
 
@@ -232,17 +246,23 @@ What happens behind the scenes:
 
 **Resuming.** If the browser closes or the network drops, the **Interrupted uploads** panel lists unfinished uploads. Select the same file again and only the missing parts are uploaded. Unfinished uploads are cleaned up automatically after 48 hours.
 
+**Names.** A new creative never takes a name already used in its application: an existing *Spot* makes the next one *Spot (2)*, then *Spot (3)*.
+
 **Limits.** The maximum file size is the lower of `UPLOAD_MAX_FILE_SIZE_MB` (server) and the value set in **Settings → Platform**. Only the formats in [section 6](#6-supported-file-formats) are accepted.
 
 ### 4.7 Full and preview versions
 
-A file whose name ends with `_preview` (any letter case, before the extension) is a **preview**. The rest of the name is the **match key**, used to find its full version:
+A **preview** is the lite version of a video (or of any file). A file is a preview when its name contains the word `preview` as a separate word after the first one, separated by `_`, `-`, `.` or a space, in any letter case. The rest of the name is the **match key**, used to find its full version:
 
 | File | Version type | Match key |
 |---|---|---|
 | `Summer_Promo.mp4` | FULL | `summer promo` |
 | `Summer_Promo_preview.mp4` | PREVIEW | `summer promo` |
-| `summer-promo_PREVIEW.mov` | PREVIEW | `summer promo` |
+| `summer-promo-PREVIEW.mov` | PREVIEW | `summer promo` |
+| `promo_preview_v2.mp4` | PREVIEW | `promo v2` |
+| `preview_of_launch.mp4`, `spot_previews.mp4` | FULL | (not a preview) |
+
+When a preview finds no full version with exactly the same name in the same upload or ZIP, it is paired with the only full version whose name matches once the words *reel*, *final*, *master*, *full*, *hd* and *hq* are ignored: `spot_preview.mp4` ↔ `spot_reel.mp4`, `promo_preview_v2.mp4` ↔ `promo_reel_final_v2.mp4`. If two full versions could match, nothing is paired automatically.
 
 Matching rules. Matching only happens **within the same application**, and nothing is ever linked silently:
 
@@ -258,18 +278,36 @@ Files can be moved between creatives later (**Versions → Move to another creat
 
 ### 4.8 ZIP import
 
-**Upload → ZIP import** imports many files at once.
+**Upload → ZIP import** imports a whole folder of creatives at once.
 
-1. Choose the default application and campaign. Optionally tick **Keep the original archive as an import record** to keep the ZIP itself in R2 (the default comes from **Settings → Platform**).
-2. Upload the ZIP. It goes directly to R2, like any other file.
-3. The worker **analyses** the archive and rejects, with a reason for each entry:
-   - path traversal (`..`), absolute paths, drive letters, control characters, paths that are too deep or too long;
-   - symbolic links and encrypted entries;
-   - unsupported formats, and system junk (`__MACOSX`, `.DS_Store`, `Thumbs.db`);
-   - zip bombs: too many entries (`ZIP_MAX_ENTRIES`), too large in total (`ZIP_MAX_UNCOMPRESSED_MB`), or a suspicious compression ratio (`ZIP_MAX_COMPRESSION_RATIO`);
-   - files whose content does not match their extension.
-4. The **review page** (`/imports/<id>`) lists every entry with its detected version type, suggested application and campaign (taken from folder names, for example `iCoral/Summer 2026/spot.mp4`), the proposed creative grouping and any **decision you must make**. You can include or exclude entries and change targets.
-5. Click **Confirm import**. The worker extracts each accepted entry and streams it to R2 under a new, generated key (never under the archive's path). It then registers the creatives and versions, and the normal processing (thumbnails, metadata, checksum) follows.
+**Folder structure.** Put one folder per platform (application) inside a `data_creatives` folder, with the files in `banners/` and `videos/`:
+
+```
+data_creatives/
+  icoral/
+    banners/   banner.jpg
+    videos/    spot.mp4
+               spot_preview.mp4
+  win+pharma/
+    banners/
+    videos/
+```
+
+**Download import template** (on the ZIP import tab) gives you this skeleton as a ZIP, with one folder for every active platform you can upload to and a `README.txt` that the import ignores.
+
+1. Zip the `data_creatives` folder and choose it. The **fallback application** and campaign only apply to files that are not inside a platform folder. Optionally tick **Keep the original archive as an import record** to keep the ZIP itself in storage (the default comes from **Settings → Platform**).
+2. Upload the ZIP. It goes directly to storage, like any other file.
+3. The worker **analyses** the archive:
+   - **Platform:** the folder just above `banners/` or `videos/` (also `banner`, `video`, `images`) names the platform. It matches an application by name, ignoring case and punctuation (`win+pharma` ↔ *Win+Pharma*, `icoral` ↔ *iCoral*). The wrapper folder (`data_creatives/`) is ignored. Archives without media folders still work: a folder named after an application anywhere in the path is used.
+   - **New platform:** a platform folder that matches no application becomes a **new platform**. It is created when an administrator confirms the import; for anyone else the review asks them to choose an existing platform. A folder that matches a disabled application, or one you cannot access, falls back to the default application.
+   - **Category:** files in `banners/` get the *Banner* category; others get the default for their type (videos: *Marketing video*).
+   - **Previews** are paired with their full version ([4.7](#47-full-and-preview-versions)).
+   - **Always new creatives:** an import never adds files to creatives already in the library and never replaces anything. A name already used in the platform gets *(2)*, *(3)*…
+   - **Badges:** a badge whose name appears as whole words in the file name is added automatically (`…-higgsfield.mp4` → *Higgsfield*, `…_3d_reel.mp4` → *3D*).
+   - Entries are rejected, with a reason for each, for: path traversal (`..`), absolute paths, drive letters, control characters, paths that are too deep or too long; symbolic links and encrypted entries; unsupported formats, and system junk (`__MACOSX`, `.DS_Store`, `Thumbs.db`); zip bombs (too many entries `ZIP_MAX_ENTRIES`, too large in total `ZIP_MAX_UNCOMPRESSED_MB`, or a suspicious compression ratio `ZIP_MAX_COMPRESSION_RATIO`); files whose content does not match their extension.
+4. The **review page** (`/imports/<id>`) lists every entry with its version type, platform (*From folder name* or *New platform*), campaign, category, creative name and **badges**, and how files are grouped. New platforms are announced at the top. You can include or exclude entries, rename creatives and change any choice.
+   - **Badges before import:** each new creative has a badge select (already filled with the badges detected from its file name). Tick badges on or off, or type a new name, pick a colour and create it (admins and managers). **Badges** at the top applies a badge to every selected creative at once, or removes it when all of them have it. Preview files take the badges of their full version.
+5. Click **Import**. The worker creates any new platforms, extracts each accepted entry, streams it to storage under a new, generated key (never under the archive's path), and registers the creatives and versions. The normal processing (thumbnails, metadata, checksum) follows.
 
 You get a notification when the analysis is ready and when the import finishes. If you did not choose to keep the archive, it is deleted after the import.
 
@@ -328,7 +366,7 @@ Admins can **create** and **edit** an application (name, brand colour, descripti
 
 ### 4.13 Activity history
 
-`/activity` (admins and managers) is the audit log. It records sign-ins (including failures), sign-outs, password changes, creative creation, edits, deletions and status changes, approvals and declines, uploads and new versions, file moves, deletions, downloads and integrity failures, application, campaign, user and settings changes, ZIP imports and storage checks.
+`/activity` (admins and managers) is the audit log. It records sign-ins (including failures), sign-outs, password changes, creative creation, edits, deletions and status changes, approvals and declines, uploads and new versions, file replacements (with the space freed), file moves, deletions, downloads and integrity failures, badge changes, application, campaign, user and settings changes, ZIP imports and storage checks.
 
 You can search it (activity, user or creative) and filter by user, action, entity type (user, creative, file, application, campaign, import), application and date range. **Export CSV** downloads the filtered log; cells are escaped so the file is safe to open in a spreadsheet. Entries keep their readable summary even after the creative or user they mention has been deleted.
 
@@ -348,15 +386,16 @@ You never get a notification for your own action. Notifications can be marked re
 ### 4.15 Storage
 
 `/storage` (admins and managers) is calculated from the database records:
-- **Total stored** (with the number of files and creatives), **Full versions**, **Preview versions** and **Estimated monthly cost** (from the price per GB set in Settings; R2 charges no egress fees);
+- **Total stored** (with the number of files and creatives), **Full versions**, **Preview versions** and **Estimated monthly cost** (from your own price per GB-month set in Settings);
 - **Capacity planning:** usage against the warning threshold;
 - **Storage by application**, **Storage by category** and **Largest files**;
-- **Bucket reconciliation** (admins): the worker lists the real R2 bucket and compares it with the database. It reports objects that exist in R2 but not in the database (orphans) and records whose object is missing.
+- **Bucket reconciliation** (admins): the worker lists the real bucket and compares it with the database. It reports objects that exist in the bucket but not in the database (orphans) and records whose object is missing.
 
 ### 4.16 Settings
 
 `/settings`:
 - **Preferences** (everyone): theme, default library view, show preview versions.
+- **Badges** (admins and managers): add a badge (name and colour), rename or recolour it, and delete it (it is removed from every creative; the creatives themselves are not changed). The seed creates *Motion graphique*, *Higgsfield*, *3D* and *Sans miniature*.
 - **Platform** (admins):
 
 | Setting | Default | Effect |
@@ -365,10 +404,10 @@ You never get a notification for your own action. Notifications can be marked re
 | Keep ZIP import archives | off | The default for the "keep the original archive" option |
 | Maximum upload size (MB) | `UPLOAD_MAX_FILE_SIZE_MB` | Can be lowered, never raised above the server limit |
 | Storage warning threshold (GB) | 500 | Warning shown on the Dashboard and Storage pages |
-| Storage price per GB-month (USD) | 0.015 | Used for the cost estimate |
+| Storage price per GB-month (USD) | 0.015 | Your own RustFS cost (disks, replication, backups); used for the cost estimate |
 | Default page size | 24 | Library page size (24, 48 or 96) |
 
-- **System status** (admins): whether Cloudflare R2 storage is configured (bucket and endpoint), background worker health (jobs queued or running, jobs failed in the last 24 hours, time of the last completed job, and a warning when the queue is not being processed), and the active upload and ZIP import limits.
+- **System status** (admins): whether RustFS storage is configured (bucket and endpoint), background worker health (jobs queued or running, jobs failed in the last 24 hours, time of the last completed job, and a warning when the queue is not being processed), and the active upload and ZIP import limits.
 
 ### 4.17 Profile
 
@@ -392,6 +431,10 @@ Every rule is enforced on the server (`src/lib/permissions.ts`, `src/lib/visibil
 | Restore | ✅ | ✅ | — | — |
 | Delete creatives | any | — | own drafts never submitted | — |
 | Manage campaigns | ✅ | ✅ | — | — |
+| Switch badges on a creative | ✅ | ✅ | own drafts and declined | — |
+| Manage the badge list | ✅ | ✅ | — | — |
+| Replace a file | ✅ | ✅ | own drafts and declined | — |
+| Create platforms from a ZIP import | ✅ | — | — | — |
 | Manage applications, users and platform settings | ✅ | — | — | — |
 | Activity history, storage analytics | ✅ | ✅ | — | — |
 | Bucket reconciliation | ✅ | — | — | — |
@@ -439,18 +482,18 @@ flowchart LR
     ZIP[ZIP analysis and extraction]
   end
   DB[(PostgreSQL)]
-  R2[(Cloudflare R2)]
+  S3[(RustFS<br/>S3-compatible)]
   UI --> PX --> RSC & SA & API
   RSC & SA & API --> DB
-  API -- presign / complete --> R2
-  UE -- presigned PUT --> R2
-  UI -- presigned GET --> R2
+  API -- presign / complete --> S3
+  UE -- presigned PUT --> S3
+  UI -- presigned GET --> S3
   Q --> DB
   Q --> MP & ZIP
-  MP & ZIP <--> R2
+  MP & ZIP <--> S3
 ```
 
-- **Files never pass through the web servers.** Browsers upload to and download from R2 with short-lived presigned URLs; the app only checks permissions and signs requests.
+- **Files never pass through the web servers.** Browsers upload to and download from RustFS with short-lived presigned URLs; the app only checks permissions and signs requests.
 - **PostgreSQL is the system of record** for metadata, permissions, sessions, rate limits, the job queue and the audit log.
 - **Every page is rendered dynamically per user.** All queries go through `creativeVisibilityWhere()` so each user sees only what their role and application access allow.
 - **Mutations** are Server Actions (forms and buttons) or route handlers (uploads), and each one checks authentication, permission and rate limits.
@@ -461,7 +504,7 @@ flowchart LR
 sequenceDiagram
   participant B as Browser
   participant A as Web app
-  participant R as R2
+  participant R as RustFS
   participant W as Worker
   B->>A: POST /api/uploads/plan (names, sizes)
   A-->>B: version types + association suggestions
@@ -479,8 +522,8 @@ sequenceDiagram
   W->>R: PUT thumbnail / display rendition (separate objects)
 ```
 
-- **Resume:** each upload session stores a fingerprint (name, size, last-modified date). R2's `ListParts` is the source of truth for which parts already exist.
-- **Cancel:** aborts the multipart upload in R2 and removes the creative if it was created only for this upload.
+- **Resume:** each upload session stores a fingerprint (name, size, last-modified date). The storage server's `ListParts` is the source of truth for which parts already exist.
+- **Cancel:** aborts the multipart upload in storage and removes the creative if it was created only for this upload.
 - **Originals are written once and never rewritten.** Thumbnails (WebP, up to 640 px) and display renditions (WebP, up to 2560 px) are separate objects.
 
 ### 7.3 Background worker
@@ -489,10 +532,10 @@ The worker (`npm run worker`) claims jobs from the `Job` table with `FOR UPDATE 
 
 | Job | What it does |
 |---|---|
-| `PROCESS_FILE` | Streams the original from R2, recomputes SHA-256 and compares it with the browser's checksum (a mismatch flags the file and notifies the uploader), extracts metadata (ffprobe for video and audio, sharp for images, pdfinfo for PDFs) and makes the thumbnail and display rendition (ffmpeg, sharp, pdftoppm) |
+| `PROCESS_FILE` | Streams the original from storage, recomputes SHA-256 and compares it with the browser's checksum (a mismatch flags the file and notifies the uploader), extracts metadata (ffprobe for video and audio, sharp for images, pdfinfo for PDFs) and makes the thumbnail and display rendition (ffmpeg, sharp, pdftoppm) |
 | `ANALYZE_IMPORT` | Reads a ZIP's directory, applies the safety checks, sniffs each entry's content and builds the review list with suggestions |
-| `RUN_IMPORT` | Extracts the confirmed entries, uploads them to R2 and registers creatives and versions |
-| `DELETE_OBJECTS` | Deletes R2 objects after a creative or version is deleted |
+| `RUN_IMPORT` | Extracts the confirmed entries, uploads them to storage and registers creatives and versions |
+| `DELETE_OBJECTS` | Deletes stored objects after a creative or version is deleted |
 | `RECONCILE_STORAGE` | Compares the bucket with the database (Storage → Reconcile) |
 
 - **Retries:** a failed job is retried with exponential backoff (15 s, 30 s, 60 s, … up to 30 minutes) until it runs out of attempts, then marked `FAILED` with its last error and counted in **Settings → System status**.
@@ -503,7 +546,7 @@ The worker (`npm run worker`) claims jobs from the `Job` table with `FOR UPDATE 
 
 If the worker is stopped, uploads still succeed; thumbnails, metadata and checksum checks simply wait until it runs again.
 
-### 7.4 Storage layout in R2
+### 7.4 Storage layout in the bucket
 
 Object keys use immutable ids, so renaming a creative never moves files.
 
@@ -519,7 +562,7 @@ The original filename is stored in the database and sent back on download throug
 
 ### 7.5 Downloads and previews
 
-- `GET /api/files/<id>/download` checks permission, logs a `FILE_DOWNLOADED` audit entry and redirects to a presigned R2 URL valid for 5 minutes (`DOWNLOAD_URL_TTL_SECONDS`).
+- `GET /api/files/<id>/download` checks permission, logs a `FILE_DOWNLOADED` audit entry and redirects to a presigned storage URL valid for 5 minutes (`DOWNLOAD_URL_TTL_SECONDS`).
 - `GET /api/files/<id>/preview` redirects to an inline presigned URL valid for 4 hours (`SIGNED_URL_TTL_SECONDS`), which the video player and PDF viewer use.
 - Thumbnail URLs are signed with an hour-rounded timestamp, so the same URL is reused for an hour and cached by the browser.
 
@@ -541,11 +584,12 @@ The schema is in `prisma/schema.prisma`. Media binaries are never stored in Post
 | `Creative` | Name, description, application, campaign, category, media type, status, channels, keywords, match key, timestamps (submitted, approved, declined, archived) |
 | `CreativeFile` | One stored version: type, number, current flag, label, original filename, storage key, size, MIME type, dimensions, duration, frame rate, codecs, bitrate, page count, browser and verified checksums, integrity and processing status, thumbnail and display keys, extra metadata |
 | `Tag`, `CreativeTag` | Tags on creatives |
+| `Badge`, `CreativeBadge` | Badges (name, slug, colour, order) and the creatives that carry them |
 | `Validation` | One row per workflow step: action, from and to status, reviewer, comment, reason, file reviewed |
 | `ActivityLog` | Audit log: actor, action, entity, summary, metadata, IP address, user agent |
 | `Notification` | In-app notifications with read state |
-| `UploadSession` | Direct-to-R2 upload state: mode, R2 upload id, part size and count, fingerprint, target creative, expiry |
-| `ImportBatch`, `ImportItem` | ZIP imports: per-entry checks, suggestions, the user's decisions and the result |
+| `UploadSession` | Direct-to-storage upload state: mode, S3 multipart upload id, part size and count, fingerprint, target creative, the file it replaces (if any), expiry |
+| `ImportBatch`, `ImportItem` | ZIP imports: per-entry checks, suggestions (including a new platform name), the user's decisions and the result |
 | `Job` | The background job queue |
 | `StorageSnapshot` | Results of bucket reconciliations |
 | `SystemSetting` | Admin-editable platform settings |
@@ -553,8 +597,10 @@ The schema is in `prisma/schema.prisma`. Media binaries are never stored in Post
 **Migrations** are in `prisma/migrations/`:
 1. `20261030015219_init`: the full schema. It also enables the `pg_trgm` extension, used for fast text search on creative names and filenames.
 2. `20261030022057_import_item_review`: review fields for ZIP import items.
+3. `20261030135813_badges_replace_platform_import`: badges, file replacement (`UploadSession.replacesFileId`, `FILE_REPLACED` activity) and new platforms in ZIP imports (`ImportItem.newApplicationName`).
+4. `20261030150250_import_item_badges`: badges chosen in the import review (`ImportItem.badgeIds`).
 
-**Seed** (`npm run db:seed`, safe to run more than once): the four roles, the four applications (Win+Pharma, iCoral, Pharmalien, WinMed) and the first admin from `SEED_ADMIN_*`. If `SEED_ADMIN_PASSWORD` is empty or shorter than 10 characters, a temporary password is generated, printed once and must be changed at first sign-in. With `SEED_DEMO_USERS=true` (development only; refused when `NODE_ENV=production`) it also creates `manager@cmp.local`, `creator@cmp.local` and `viewer@cmp.local` (password `SEED_DEMO_PASSWORD`, or `Demo-Password-2026` when it is empty) plus sample campaigns and tags.
+**Seed** (`npm run db:seed`, safe to run more than once): the four roles, the four applications (Win+Pharma, iCoral, Pharmalien, WinMed), the four default badges and the first admin from `SEED_ADMIN_*`. If `SEED_ADMIN_PASSWORD` is empty or shorter than 10 characters, a temporary password is generated, printed once and must be changed at first sign-in. With `SEED_DEMO_USERS=true` (development only; refused when `NODE_ENV=production`) it also creates `manager@cmp.local`, `creator@cmp.local` and `viewer@cmp.local` (password `SEED_DEMO_PASSWORD`, or `Demo-Password-2026` when it is empty) plus sample campaigns and tags.
 
 Further diagrams (entity relationships, matching and workflow state machine) are in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -570,7 +616,7 @@ Further diagrams (entity relationships, matching and workflow state machine) are
 | CSRF | Built-in origin check for Server Actions; same-origin check (`Origin` and Fetch-Metadata headers) for mutating API routes |
 | Rate limiting | Failed sign-ins (8 per account and, with `TRUST_PROXY`, 30 per IP per 15 minutes), password changes, search, uploads, downloads, lookups, ZIP imports and CSV exports, stored in PostgreSQL |
 | HTTP headers | Per-request nonce Content-Security-Policy, `frame-ancestors 'none'`, HSTS in production, `nosniff`, Referrer-Policy, Permissions-Policy, Cross-Origin-Opener-Policy |
-| Storage | Private bucket; R2 credentials exist only on the server and are never sent to the browser; presigned URLs are limited to one object or part and expire quickly; the bucket is never publicly writable |
+| Storage | Private bucket; RustFS credentials exist only on the server and are never sent to the browser; presigned URLs are limited to one object or part and expire quickly; the bucket is never publicly writable |
 | Uploads | Extension allow-list, size limits, stored-size check, content (magic byte) check, checksum verification |
 | ZIP files | See [4.8](#48-zip-import). Entries are streamed to generated keys and never written to disk under their archive path |
 | Audit | Activity log of security-relevant events; CSV export escapes formula characters |
@@ -588,7 +634,7 @@ Further diagrams (entity relationships, matching and workflow state machine) are
 | PostgreSQL | 14 or newer, with `pg_trgm` available (it is by default) | database |
 | ffmpeg and ffprobe | any recent version | worker: video and audio metadata, thumbnails |
 | poppler-utils (`pdftoppm`, `pdfinfo`) | any recent version | worker: PDF metadata and thumbnails |
-| File storage | Cloudflare R2, or a local S3-compatible server for development | uploads |
+| File storage | A RustFS server (or any S3-compatible server for development) | uploads |
 
 On Debian or Ubuntu:
 
@@ -613,23 +659,18 @@ sudo -u postgres psql -c "CREATE USER cmp WITH PASSWORD 'change-me';" -c "CREATE
 Or start one with Docker:
 
 ```bash
-docker compose up -d db
+docker compose --env-file .env.dev up -d db
 ```
 
-Then set `DATABASE_URL="postgresql://cmp:change-me@127.0.0.1:5432/cmp"` in `.env`.
+Then set `DATABASE_URL="postgresql://cmp:change-me@127.0.0.1:5432/cmp"` in `.env.dev`.
 
 ### 10.3 File storage for development
 
 Use one of these:
 
-- **Real Cloudflare R2:** follow [section 12](#12-cloudflare-r2-setup), using a separate development bucket.
-- **MinIO with Docker:** start it with the command below, then set `R2_ENDPOINT="http://127.0.0.1:9000"`. MinIO uses `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` as its credentials (`minioadmin` / `minioadmin` when they are empty).
-
-  ```bash
-  docker compose --profile local-storage up -d minio
-  ```
-
-- **moto (Python):** install and start it with the commands below, then set `R2_ENDPOINT="http://127.0.0.1:9000"`, `R2_ACCESS_KEY_ID="test"`, `R2_SECRET_ACCESS_KEY="test"` and `R2_BUCKET="cmp-dev"`.
+- **A RustFS development bucket** (recommended): a bucket on your RustFS server reserved for development. Set `URL_RUSTFS` (for example `https://files.example.com`), `BUCKET_NAME`, `ACCESS_KEY` and `SECRET_KEY` in `.env.dev`, then follow [section 12](#12-rustfs-storage-setup).
+- **RustFS on your machine:** download the build for your OS from the [RustFS releases](https://github.com/rustfs/rustfs/releases) (Windows, macOS and Linux) and start it with a data folder, for example `rustfs server --address 127.0.0.1:9000 ./rustfs-data` (credentials from `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY`). Then set `URL_RUSTFS="http://127.0.0.1:9000"`. With Docker you can also use the bundled service: `docker compose --env-file .env.dev --profile rustfs up -d rustfs`.
+- **moto (Python), for tests only:** an in-memory S3 emulator; files are lost when it stops. Install and start it with the commands below, then set `URL_RUSTFS="http://127.0.0.1:9000"`, `ACCESS_KEY="test"`, `SECRET_KEY="test"` and `BUCKET_NAME="cmp-dev"`.
 
   ```bash
   pip install "moto[server,s3]"
@@ -648,10 +689,10 @@ npm install
 `npm install` also generates the Prisma client (`src/generated/prisma`).
 
 ```bash
-cp .env.example .env
+cp .env.dev.example .env.dev
 ```
 
-Edit `.env` (see [section 11](#11-environment-variables)). Then apply the migrations and seed:
+Edit `.env.dev` (see [section 11](#11-environment-variables)). Then apply the migrations and seed:
 
 ```bash
 npm run db:migrate
@@ -661,7 +702,7 @@ npm run db:migrate
 npm run db:seed
 ```
 
-Create the bucket (development only) and apply its CORS rules:
+Create the bucket if it does not exist and apply its CORS rules:
 
 ```bash
 npm run storage:setup -- --create
@@ -683,7 +724,7 @@ Open <http://localhost:3000>.
 
 ### 10.5 Demo data (optional, development only)
 
-Set `SEED_DEMO_USERS=true` in `.env`, run `npm run db:seed` again, then generate real sample media through the real upload and processing pipeline (needs ffmpeg and the worker running):
+Set `SEED_DEMO_USERS=true` in `.env.dev`, run `npm run db:seed` again, then generate real sample media through the real upload and processing pipeline (needs ffmpeg and the worker running):
 
 ```bash
 npm run demo:media
@@ -711,7 +752,21 @@ npm run demo:media
 
 ## 11. Environment variables
 
-Every setting comes from environment variables, validated at startup by `src/lib/env.ts`. The template is [`.env.example`](../.env.example). Never commit a real `.env`.
+Every setting comes from environment variables, validated at startup by `src/lib/env.ts`.
+
+### Environment files: `.env.dev` and `.env.prod`
+
+`src/lib/load-env.ts` loads one file into the environment before anything reads it. It is imported first by `next.config.ts`, `prisma.config.ts`, the worker and the scripts.
+
+| File | Loaded when | Used by |
+|---|---|---|
+| `.env.dev` | `NODE_ENV` is not `production` | `npm run dev`, `npm run worker`, `npm run db:*`, `npm run storage:setup`, `npm run demo:media` |
+| `.env.prod` | `NODE_ENV=production` | `npm run build`, `npm run start`, the Docker images and `docker compose` (`env_file: .env.prod`) |
+
+- `ENV_FILE=<file>` loads another file instead, for example `ENV_FILE=.env.dev npm run start` to run a production build with development settings.
+- Variables already set in the real environment always win, so hosting providers and containers can inject values without any file.
+- Both files are git-ignored and never copied into Docker images. Commit only the templates [`.env.dev.example`](../.env.dev.example) and [`.env.prod.example`](../.env.prod.example).
+- Do not create a plain `.env`: Next.js would load it as well, and its values would take precedence.
 
 ### Required
 
@@ -719,9 +774,9 @@ Every setting comes from environment variables, validated at startup by `src/lib
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection string |
 | `APP_URL` | Public URL of the app, for example `https://creatives.example.com`. Used for origin checks and bucket CORS |
-| `R2_ACCOUNT_ID` | Cloudflare account id. Not needed when `R2_ENDPOINT` is set |
-| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | R2 API token with Object Read & Write on the bucket |
-| `R2_BUCKET` | Bucket name |
+| `URL_RUSTFS` | S3 API endpoint of the RustFS server, for example `https://files.example.com`. Browsers upload and download through presigned URLs on this host, so it must be reachable from users' browsers as well as from the app and the worker |
+| `BUCKET_NAME` | Bucket name |
+| `ACCESS_KEY`, `SECRET_KEY` | RustFS access key and secret key with read and write access to the bucket |
 
 If the storage variables are missing, the app still runs but shows "File storage is not configured" and disables uploads; it never pretends storage works.
 
@@ -729,12 +784,11 @@ If the storage variables are missing, the app still runs but shows "File storage
 
 | Variable | Default | Description |
 |---|---|---|
-| `TRUST_PROXY` | `false` | Set `true` behind a reverse proxy or load balancer so client IPs come from `X-Forwarded-For` / `CF-Connecting-IP` |
+| `ENV_FILE` | `.env.dev` / `.env.prod` | Environment file to load (see above) |
+| `TRUST_PROXY` | `false` | Set `true` behind a reverse proxy or load balancer so client IPs come from `X-Real-IP` / `X-Forwarded-For` |
 | `SESSION_TTL_DAYS` | `7` | Sliding session lifetime |
 | `DATABASE_POOL_SIZE` | `10` | Database connections per process |
-| `R2_ENDPOINT` | built from `R2_ACCOUNT_ID` | Endpoint override (EU jurisdiction, or a local S3 server) |
-| `R2_REGION` | `auto` | Region for request signing |
-| `R2_FORCE_PATH_STYLE` | `true` | Path-style URLs (one storage origin for the CSP) |
+| `S3_REGION` | `us-east-1` | Signing region; must match the server's `RUSTFS_REGION` |
 | `STORAGE_CORS_EXTRA_ORIGINS` | empty | Extra allowed origins for `storage:setup`, comma separated |
 | `UPLOAD_MAX_FILE_SIZE_MB` | `20480` | Hard per-file limit (admins can only lower it) |
 | `UPLOAD_PART_SIZE_MB` | `16` | Multipart part size (minimum 5) |
@@ -756,19 +810,24 @@ Test-only variables are listed in [section 15](#15-testing).
 
 ---
 
-## 12. Cloudflare R2 setup
+## 12. RustFS storage setup
 
-1. **Create a bucket** in the Cloudflare dashboard (R2 → Create bucket). Keep it **private**: do not enable public access or an `r2.dev` URL.
-2. **Create an API token** (R2 → Manage R2 API Tokens) with **Object Read & Write** permission, limited to this bucket. Copy the **Access Key ID**, the **Secret Access Key** and your **Account ID** into `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_ACCOUNT_ID`, and set `R2_BUCKET`. For a bucket in the EU jurisdiction, set `R2_ENDPOINT="https://<account-id>.eu.r2.cloudflarestorage.com"`.
-3. **Apply CORS**, so browsers can upload directly and read the `ETag` header that multipart uploads need:
+[RustFS](https://github.com/rustfs/rustfs) is a self-hosted object store that speaks the Amazon S3 API. The platform talks to it with the AWS SDK and presigned URLs; buckets are always addressed path-style (`https://<URL_RUSTFS host>/<bucket>/<key>`).
+
+1. **Run RustFS** on a server you control, behind HTTPS (for example `https://files.example.com`). For production, use several disks or nodes (erasure coding) and change the default `rustfsadmin` credentials.
+2. **Create a bucket** in the RustFS console (or run `npm run storage:setup -- --create`). Keep it **private**: do not add an anonymous or public bucket policy.
+3. **Create an access key** with read and write access to that bucket. Put it in `ACCESS_KEY` / `SECRET_KEY`, the endpoint in `URL_RUSTFS` and the bucket in `BUCKET_NAME`, in `.env.dev` or `.env.prod`. If your server sets `RUSTFS_REGION`, set the same value in `S3_REGION`.
+4. **Apply CORS**, so browsers can upload directly and read the `ETag` header that multipart uploads need:
 
    ```bash
    npm run storage:setup
    ```
 
-   It allows `APP_URL` plus `STORAGE_CORS_EXTRA_ORIGINS`. The equivalent manual rule is: allowed origins = your app URL; methods `GET`, `PUT`, `HEAD`; allowed headers `content-type`, `content-length`, `range`; exposed headers `ETag`, `Content-Length`, `Content-Range`, `Accept-Ranges`.
-4. **Optional:** add a lifecycle rule that aborts incomplete multipart uploads after 7 days (the worker already cleans them up itself), and enable bucket versioning or replication if you want protection against accidental deletion.
-5. **Verify:** open **Settings → System status**, then upload a file and check that it reaches *Verified* integrity.
+   It allows `APP_URL` plus `STORAGE_CORS_EXTRA_ORIGINS`. The equivalent manual rule is: allowed origins = your app URL; methods `GET`, `PUT`, `HEAD`; allowed headers `content-type`, `content-length`, `range`; exposed headers `ETag`, `Content-Length`, `Content-Range`, `Accept-Ranges`. If the server refuses bucket CORS, allow the app origin on the RustFS server with `RUSTFS_CORS_ALLOWED_ORIGINS`.
+5. **Optional:** enable bucket versioning or replication if you want protection against accidental deletion. The worker already aborts abandoned multipart uploads itself.
+6. **Verify:** open **Settings → System status**, then upload a file and check that it reaches *Verified* integrity.
+
+Run `storage:setup` once per environment: with `.env.dev` for development and with `NODE_ENV=production` (which loads `.env.prod`) for production. Use separate buckets for development and production.
 
 ---
 
@@ -781,21 +840,27 @@ The platform is **two processes** that share one database and one bucket:
 ### 13.1 Docker Compose (single server)
 
 ```bash
-cp .env.example .env
+cp .env.prod.example .env.prod
 ```
 
-Edit `.env` with production values (`NODE_ENV=production`, the real `APP_URL`, R2 credentials and a strong `SEED_ADMIN_PASSWORD`). Then:
+Edit `.env.prod` with production values (the real `APP_URL`, `URL_RUSTFS`, `BUCKET_NAME`, `ACCESS_KEY`, `SECRET_KEY` and a strong `SEED_ADMIN_PASSWORD`). Every service reads this file. Then:
 
 ```bash
-docker compose up -d db
-```
-
-```bash
-docker compose run --rm migrate
+docker compose --env-file .env.prod up -d db
 ```
 
 ```bash
-docker compose up -d web worker
+docker compose --env-file .env.prod run --rm migrate
+```
+
+```bash
+docker compose --env-file .env.prod up -d web worker
+```
+
+To run RustFS on the same server, start the bundled service. It uses `ACCESS_KEY` / `SECRET_KEY` as its root credentials and allows `APP_URL` for CORS:
+
+```bash
+docker compose --env-file .env.prod --profile rustfs up -d rustfs
 ```
 
 The `Dockerfile` has two targets:
@@ -812,20 +877,21 @@ docker build --target web -t creative-hub-web .
 docker build --target worker -t creative-hub-worker .
 ```
 
-Put the web container behind HTTPS (Caddy, Nginx, Traefik or Cloudflare) and set `TRUST_PROXY=true`.
+Put the web container and RustFS behind HTTPS (Caddy, Nginx or Traefik) and set `TRUST_PROXY=true`.
 
 ### 13.2 Managed platforms
 
 - **Web app:** any Node.js host (Vercel, Railway, Render, Fly.io, AWS ECS, Kubernetes). Build with `npm run build` and start with `npm run start`, or with `node server.js` from the standalone output.
 - **Worker:** a long-running process with ffmpeg and poppler installed (`npm run worker`). Serverless functions are **not** suitable for the worker.
 - **Database:** managed PostgreSQL (Neon, Supabase, AWS RDS, Google Cloud SQL, …). `pg_trgm` is available on all of them.
-- Run `npm run db:migrate` on **every** deploy, before starting the new version.
+- **Storage:** a RustFS server reachable over HTTPS by the app, the worker and users' browsers.
+- Provide the variables through `.env.prod` or the host's environment settings. Run `npm run db:migrate` on **every** deploy, before starting the new version.
 
 ### 13.3 Go-live checklist
 
-1. Set `NODE_ENV=production`, `APP_URL` to the public HTTPS URL, the real R2 credentials and `TRUST_PROXY=true` if behind a proxy.
+1. Fill in `.env.prod` (selected by `NODE_ENV=production`): `APP_URL` as the public HTTPS URL, `DATABASE_URL`, the RustFS variables and `TRUST_PROXY=true` if behind a proxy.
 2. Run `npm run db:migrate`, then `npm run db:seed` once to create the roles, applications and first admin.
-3. Run `npm run storage:setup` against the production bucket.
+3. Run `npm run storage:setup` with `NODE_ENV=production` against the production bucket.
 4. Start the web app and the worker.
 5. Check `/api/health` and **Settings → System status**.
 6. Sign in as admin, change the password, then create users in **Team & Users**.
@@ -840,8 +906,8 @@ Put the web container behind HTTPS (Caddy, Nginx, Traefik or Cloudflare) and set
 | Health check | `GET /api/health` returns `{"status":"ok","database":true,"storageConfigured":true}` (HTTP 503 if the database is unreachable) |
 | Worker and queue status | **Settings → System status**: queued and running jobs, failures in the last 24 hours, last completed job and a stalled-queue warning. Failed jobs keep their last error in the `Job` table (`npm run db:studio`) |
 | Logs | Web app: standard Next.js output. Worker: JSON lines on stdout |
-| Backups | Back up PostgreSQL (point-in-time recovery recommended). R2 is durable; enable versioning or replication for protection against deletion |
-| Storage drift | **Storage → Reconcile with R2** lists orphan objects and missing originals |
+| Backups | Back up PostgreSQL (point-in-time recovery recommended) and RustFS (erasure coding across disks or nodes, plus versioning or replication for protection against deletion) |
+| Storage drift | **Storage → Reconcile with storage** lists orphan objects and missing originals |
 | Automatic housekeeping | Expired sessions, rate-limit windows, abandoned uploads, empty creatives and old jobs are cleaned up by the worker every 5 minutes |
 | Scaling | Add web replicas for traffic and worker replicas for processing. Files never pass through the web servers. The worker's temp disk must hold the largest file being processed |
 | Upgrades | Deploy the new version, run `npm run db:migrate`, restart the web app and the worker |
@@ -858,13 +924,13 @@ Runs two Vitest projects:
 - **unit:** filename and `_preview` parsing, the association planner, the workflow state machine, the permission matrix, ZIP safety rules and content sniffing;
 - **integration:** against a **real PostgreSQL database** and a **real S3-compatible server**. It covers multipart uploads, resume, cancel, content rejection, version management, workflow history and notifications, the worker (checksum verification, thumbnails), hostile ZIP archives, authentication and rate limiting, and library search and visibility.
 
-Integration defaults are the database `cmp_test` on localhost and S3 on `http://127.0.0.1:9000`. Override them with `TEST_DATABASE_URL`, `TEST_R2_ENDPOINT`, `TEST_R2_ACCESS_KEY_ID`, `TEST_R2_SECRET_ACCESS_KEY` and `TEST_R2_BUCKET`. Migrations are applied automatically. **Never point the test variables at production**: the integration suite empties its database.
+Integration defaults are the database `cmp_test` on localhost and S3 on `http://127.0.0.1:9000`. Override them with `TEST_DATABASE_URL`, `TEST_URL_RUSTFS`, `TEST_ACCESS_KEY`, `TEST_SECRET_KEY` and `TEST_BUCKET_NAME`. The setup creates the test bucket and sets a permissive CORS rule on it, so use a dedicated test bucket (or moto), never a shared one. Migrations are applied automatically. **Never point the test variables at production**: the integration suite empties its database.
 
 ```bash
 npm run test:e2e
 ```
 
-Runs Playwright against a running app (`http://localhost:3000`, or `E2E_BASE_URL`), with the worker running and demo users seeded. It covers sign-in, role-based access, the full creative journey (upload of a full version and its preview, the preview toggle, the version selector, byte-identical download, submit, decline with reason, resubmit, approve, viewer access, activity log) and the admin screens.
+Runs Playwright against a running app (`http://localhost:3000`, or `E2E_BASE_URL`), with the worker running and demo users seeded. Set `E2E_ADMIN_PASSWORD` to your seeded admin password (the default, `ChangeMe!2026`, is CI's). It covers sign-in, role-based access, the full creative journey (upload of a full version and its preview, the preview toggle, the version selector, byte-identical download, submit, decline with reason, resubmit, approve, viewer access, activity log) and the admin screens.
 
 CI (`.github/workflows/ci.yml`) runs lint, typecheck, dependency audit, unit and integration tests, the production build and the end-to-end tests on every push and pull request.
 
@@ -880,12 +946,13 @@ Pages and most mutations use Server Actions. These route handlers exist for uplo
 |---|---|---|---|
 | `POST /api/uploads/plan` | Detect version types and propose creative associations for a list of files | upload | 120/min |
 | `GET /api/uploads` | List your resumable (unfinished) uploads | upload | — |
-| `POST /api/uploads` | Create an upload batch (creatives + upload sessions) | upload | 30/min |
+| `POST /api/uploads` | Create an upload batch (creatives + upload sessions). A file with `replaceFileId` replaces that file once it completes | upload | 30/min |
 | `GET /api/uploads/:id` | Upload session status and uploaded parts | owner | — |
 | `DELETE /api/uploads/:id` | Cancel (abort) an upload | owner | — |
 | `POST /api/uploads/:id/parts` | Presign part URLs | owner | 1200/min |
 | `POST /api/uploads/:id/complete` | Complete, validate and register the file | owner | — |
 | `POST /api/imports` | Start a ZIP import upload | import | 10/min |
+| `GET /api/imports/template` | Download the `data_creatives` template ZIP for your platforms | import | — |
 | `GET /api/files/:id/download` | Redirect to a short-lived download URL (audited) | view | 300/min |
 | `GET /api/files/:id/preview` | Redirect to an inline preview URL | view | — |
 | `GET /api/search?q=` | Global search | signed in | 120/min |
@@ -965,7 +1032,7 @@ src/
   components/            ui/ (shadcn), layout/, library/, creatives/, upload/,
                          imports/, charts/, team/, settings/, … 
   lib/                   env, db, auth/, permissions, visibility, workflow,
-                         files/ (types, naming, matching), storage/ (r2, keys),
+                         files/ (types, naming, matching), storage/ (s3, keys), load-env,
                          zip/safety, upload/engine (browser), rate-limit, activity, …
   server/
     actions/             Server Actions (auth, creatives, applications, campaigns,
@@ -984,7 +1051,7 @@ docs/
   DOCUMENTATION.md       this document
   ARCHITECTURE.md        architecture diagrams and design decisions
   CHECKLIST.md           requirements status and test results
-Dockerfile, docker-compose.yml, .github/workflows/ci.yml, .env.example
+Dockerfile, docker-compose.yml, .github/workflows/ci.yml, .env.dev.example, .env.prod.example
 ```
 
 ---
@@ -993,8 +1060,8 @@ Dockerfile, docker-compose.yml, .github/workflows/ci.yml, .env.example
 
 | Symptom | Cause and fix |
 |---|---|
-| "File storage is not configured" | `R2_*` variables are missing or empty. Set them and restart the web app and the worker |
-| Uploads fail immediately with a network or CORS error | Bucket CORS is missing or `APP_URL` does not match the URL in the browser. Run `npm run storage:setup` with the correct `APP_URL` (add other origins with `STORAGE_CORS_EXTRA_ORIGINS`) |
+| "File storage is not configured" | `URL_RUSTFS`, `BUCKET_NAME`, `ACCESS_KEY` or `SECRET_KEY` is missing in the loaded file (`.env.dev`, or `.env.prod` when `NODE_ENV=production`). Set them and restart the web app and the worker |
+| Uploads fail immediately with a network or CORS error | Bucket CORS is missing, `APP_URL` does not match the URL in the browser, or the browser cannot reach `URL_RUSTFS`. Run `npm run storage:setup` with the correct `APP_URL` (add other origins with `STORAGE_CORS_EXTRA_ORIGINS`) |
 | Files stay at "Processing" with no thumbnail | The worker is not running, or ffmpeg/poppler is missing. Start `npm run worker` and check **Settings → System status** and the worker logs |
 | "Integrity mismatch" on a file | The stored bytes differ from what the browser uploaded. Upload the file again; approval stays blocked until a verified version exists |
 | "does not look like a valid .xxx file" | The file's content does not match its extension. Export the file again in the correct format |
@@ -1004,12 +1071,14 @@ Dockerfile, docker-compose.yml, .github/workflows/ci.yml, .env.example
 | Seed printed a temporary password | `SEED_ADMIN_PASSWORD` was empty or shorter than 10 characters. Use the printed password and change it at first sign-in |
 | `Unknown argument` errors after changing the schema | The Prisma client is stale. Run `npx prisma generate` and restart the dev server and the worker |
 | Health check returns 503 | The database is unreachable. Check `DATABASE_URL` and the network |
+| `SignatureDoesNotMatch` from storage | Wrong `SECRET_KEY`, or `S3_REGION` differs from the server's `RUSTFS_REGION` |
+| Settings from `.env.dev` are ignored | A plain `.env` exists (Next.js loads it first), or the variable is already set in your shell. Remove `.env` or the shell variable |
 
 ---
 
 ## 20. Known limitations
 
-- **Live Cloudflare R2 not yet tested.** The storage integration was tested end-to-end against an S3-compatible server, because no R2 credentials were available while building it. Run `npm run storage:setup` and the end-to-end tests against your R2 bucket before going live.
+- **Storage is verified against RustFS for development only.** The end-to-end suite passed against a RustFS server (browser uploads, previews, byte-identical downloads, worker checksums and thumbnails); the integration suite runs against an S3 emulator. Run `npm run storage:setup` and the end-to-end tests against the production RustFS bucket before going live.
 - **Docker images not built yet.** They were not built in the development environment (no Docker available), although the standalone server they run was tested.
 - **Browser playback depends on the codec.** MP4/H.264, WebM and most MOV files play inline; MKV, AVI and unusual codecs fall back to download or to the preview version.
 - **No email.** Notifications are in-app only, and temporary passwords are shown once to the admin to share securely.

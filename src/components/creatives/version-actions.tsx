@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, Link2, MoreHorizontal, Star, Trash2 } from "lucide-react";
+import { Download, Link2, MoreHorizontal, Replace, Star, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -14,24 +14,29 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import type { MediaType, VersionType } from "@/generated/prisma/enums";
 import { deleteFileAction, moveFileAction, setCurrentFileAction } from "@/server/actions/creatives";
+import { ReplaceFileDialog } from "./replace-file-dialog";
 
-/** Per-version actions: download, make current, link to another creative, delete. */
+/** Per-version actions: download, make current, replace, link to another creative, delete. */
 export function VersionActions({
   file,
   creativeId,
   applicationId,
   canEdit,
   canDelete,
+  resetsApproval,
 }: {
-  file: { id: string; isCurrent: boolean; originalFilename: string; versionType: string; versionNumber: number };
+  file: { id: string; isCurrent: boolean; originalFilename: string; versionType: VersionType; versionNumber: number; sizeBytes: number; mediaType: MediaType };
   creativeId: string;
   applicationId: string;
   canEdit: boolean;
   canDelete: boolean;
+  resetsApproval: boolean;
 }) {
   const router = useRouter();
   const [lookup, setLookup] = useState(false);
+  const [replace, setReplace] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const makeCurrent = async () => {
@@ -62,6 +67,9 @@ export function VersionActions({
                 <Star /> Make current version
               </DropdownMenuItem>
             )}
+            <DropdownMenuItem onSelect={() => setReplace(true)}>
+              <Replace /> Replace file…
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setLookup(true)}>
               <Link2 /> Move to another creative…
             </DropdownMenuItem>
@@ -75,6 +83,16 @@ export function VersionActions({
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+      )}
+      {canEdit && (
+        <ReplaceFileDialog
+          creativeId={creativeId}
+          applicationId={applicationId}
+          file={file}
+          resetsApproval={resetsApproval}
+          open={replace}
+          onOpenChange={setReplace}
+        />
       )}
       <CreativeLookupDialog
         open={lookup}

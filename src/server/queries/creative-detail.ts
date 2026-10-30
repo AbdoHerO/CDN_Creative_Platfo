@@ -12,7 +12,7 @@ import {
   canViewCreative,
   canWithdrawCreative,
 } from "@/lib/permissions";
-import { trySignedGetUrl } from "@/lib/storage/r2";
+import { trySignedGetUrl } from "@/lib/storage/s3";
 import { creativeVisibilityWhere } from "@/lib/visibility";
 import { availableActions, type WorkflowAction } from "@/lib/workflow";
 
@@ -24,6 +24,7 @@ export async function getCreativeDetail(user: SessionUser, creativeId: string) {
       campaign: { select: { id: true, name: true } },
       createdBy: { select: { id: true, name: true } },
       tags: { include: { tag: { select: { name: true, slug: true } } } },
+      badges: { include: { badge: { select: { id: true, name: true, slug: true, color: true, sortOrder: true } } } },
       files: {
         orderBy: [{ versionType: "asc" }, { versionNumber: "desc" }],
         include: { uploadedBy: { select: { id: true, name: true } } },
@@ -125,6 +126,10 @@ export async function getCreativeDetail(user: SessionUser, creativeId: string) {
     keywords: creative.keywords,
     matchKey: creative.matchKey,
     tags: creative.tags.map((t) => t.tag),
+    badges: creative.badges
+      .map((b) => b.badge)
+      .sort((x, y) => x.sortOrder - y.sortOrder || x.name.localeCompare(y.name))
+      .map(({ id, name, slug, color }) => ({ id, name, slug, color })),
     application: creative.application,
     campaign: creative.campaign,
     createdBy: creative.createdBy,

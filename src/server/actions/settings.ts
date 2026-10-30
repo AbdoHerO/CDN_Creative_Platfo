@@ -32,7 +32,7 @@ export async function saveSettingsAction(input: z.input<typeof settingsSchema>) 
   }, "Settings saved.");
 }
 
-/** Queue a comparison of R2 objects with database records. */
+/** Queue a comparison of storage objects with database records. */
 export async function startReconciliationAction() {
   return runAction(async () => {
     const user = await requireActionUser("storage.manage");

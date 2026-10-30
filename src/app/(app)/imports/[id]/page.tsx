@@ -12,8 +12,9 @@ import { Progress } from "@/components/ui/progress";
 import { requirePagePermission } from "@/lib/auth/current-user";
 import { prisma } from "@/lib/db";
 import { formatBytes, formatDateTime } from "@/lib/format";
-import { canEditCreative } from "@/lib/permissions";
-import { applicationScope, campaignScope, creativeVisibilityWhere } from "@/lib/visibility";
+import { can } from "@/lib/permissions";
+import { applicationScope, campaignScope } from "@/lib/visibility";
+import { listBadges } from "@/server/services/badges";
 
 export const metadata: Metadata = { title: "ZIP import" };
 
@@ -39,26 +40,15 @@ export default async function ImportPage({ params }: PageProps<"/imports/[id]">)
 
   let review: React.ReactNode = null;
   if (batch.status === "READY_FOR_REVIEW") {
-    const [applications, campaigns] = await Promise.all([
+    const [applications, campaigns, badges] = await Promise.all([
       prisma.application.findMany({
         where: { AND: [applicationScope(user), { status: "ACTIVE" }] },
         orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
         select: { id: true, name: true, brandColor: true },
       }),
       prisma.campaign.findMany({ where: { AND: [campaignScope(user), { status: { not: "ARCHIVED" } }] }, orderBy: { name: "asc" }, select: { id: true, name: true, applicationId: true } }),
+      listBadges(),
     ]);
-    const keys = [...new Set(accepted.map((i) => i.matchKey))];
-    const candidates = keys.length
-      ? (
-          await prisma.creative.findMany({
-            where: { AND: [creativeVisibilityWhere(user), { matchKey: { in: keys }, status: { not: "ARCHIVED" } }] },
-            select: { id: true, name: true, status: true, matchKey: true, applicationId: true, createdById: true, submittedAt: true, files: { select: { versionType: true } } },
-            take: 500,
-          })
-        )
-          .filter((c) => canEditCreative(user, c))
-          .map((c) => ({ id: c.id, name: c.name, status: c.status, matchKey: c.matchKey, applicationId: c.applicationId, hasFull: c.files.some((f) => f.versionType === "FULL") }))
-      : [];
     review = (
       <ImportReview
         batchId={batch.id}
@@ -75,8 +65,10 @@ export default async function ImportPage({ params }: PageProps<"/imports/[id]">)
           targetCreativeId: i.targetCreativeId,
           creativeName: i.creativeName,
           category: i.category,
-          applicationId: i.applicationId ?? batch.applicationId,
+          applicationId: i.applicationId ?? (i.newApplicationName ? null : batch.applicationId),
+          newApplicationName: i.applicationId ? null : i.newApplicationName,
           campaignId: i.campaignId,
+          badgeIds: i.badgeIds,
           suggestedApplicationId: i.suggestedApplicationId,
           suggestedCampaignId: i.suggestedCampaignId,
           needsReview: i.needsReview,
@@ -85,7 +77,9 @@ export default async function ImportPage({ params }: PageProps<"/imports/[id]">)
         rejected={rejected.map((i) => ({ id: i.id, entryPath: i.entryPath, reason: i.rejectReason ?? "Rejected", sizeBytes: Number(i.sizeBytes) }))}
         applications={applications}
         campaigns={campaigns}
-        candidates={candidates}
+        canCreatePlatforms={can(user.role, "application.manage")}
+        badges={badges}
+        canCreateBadges={can(user.role, "badge.manage")}
       />
     );
   }

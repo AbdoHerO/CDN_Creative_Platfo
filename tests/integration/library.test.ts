@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { newId } from "@/lib/ids";
 import { attachFile, createCreativeRecord } from "@/server/services/creatives";
 import { transitionCreative } from "@/server/services/validation";
-import { parseLibraryParams, queryLibrary } from "@/server/queries/library";
+import { libraryCounts, parseLibraryParams, queryLibrary } from "@/server/queries/library";
 import { resetDatabase, seedWorld, type World } from "./helpers";
 
 let world: World;
@@ -127,5 +127,32 @@ describe("creative library", () => {
   it("ignores malformed parameters instead of failing", () => {
     const p = parseLibraryParams({ status: "NOPE", sort: "random", page: "-4", app: "'; drop table", size: "1000" });
     expect(p).toMatchObject({ status: undefined, sort: "newest", page: 1, app: undefined, size: undefined });
+  });
+});
+
+describe("library banner filters", () => {
+  it("filters by validation state and lite version, with matching counts", async () => {
+    const approved = await make({ name: "Approved spot", files: [{ name: "a.mp4", type: "FULL", size: 10 }, { name: "a_preview.mp4", type: "PREVIEW", size: 2 }] });
+    await transitionCreative(world.users.creator, approved.id, "submit", {});
+    await transitionCreative(world.users.manager, approved.id, "approve", {});
+    await make({ name: "Draft spot", files: [{ name: "b.mp4", type: "FULL", size: 10 }] });
+    await make({ name: "Beta draft", app: world.apps.beta, files: [{ name: "c.mp4", type: "FULL", size: 10 }, { name: "c_preview.mp4", type: "PREVIEW", size: 2 }] });
+
+    const names = async (q: Record<string, string>) =>
+      (await queryLibrary(world.users.admin, parseLibraryParams(q), { pageSize: 50, showPreviews: false })).items.map((i) => i.name).sort();
+    expect(await names({ review: "approved" })).toEqual(["Approved spot"]);
+    expect(await names({ review: "waiting" })).toEqual(["Beta draft", "Draft spot"]);
+    expect(await names({ lite: "with" })).toEqual(["Approved spot", "Beta draft"]);
+    expect(await names({ lite: "without" })).toEqual(["Draft spot"]);
+    expect(await names({ lite: "with", app: world.apps.beta })).toEqual(["Beta draft"]);
+
+    const items = (await queryLibrary(world.users.admin, parseLibraryParams({}), { pageSize: 50, showPreviews: false })).items;
+    expect(items.find((i) => i.name === "Approved spot")!.hasPreview).toBe(true);
+    expect(items.find((i) => i.name === "Draft spot")!.hasPreview).toBe(false);
+
+    const counts = await libraryCounts(world.users.admin, parseLibraryParams({ app: world.apps.alpha }));
+    expect(counts.apps).toEqual({ [world.apps.alpha]: 2, [world.apps.beta]: 1 }); // platform counts ignore the selected platform
+    expect(counts.review).toEqual({ all: 2, approved: 1, waiting: 1, declined: 0 });
+    expect(counts.lite).toEqual({ all: 2, with: 1, without: 1 });
   });
 });

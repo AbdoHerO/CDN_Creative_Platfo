@@ -8,11 +8,11 @@ import { getRequestMeta, requireActionUser } from "@/lib/auth/current-user";
 import { prisma } from "@/lib/db";
 import { AppError, NotFoundError } from "@/lib/errors";
 import { sniffMatches, fileTypeForName } from "@/lib/files/types";
-import { slugify } from "@/lib/ids";
 import { enqueueJob } from "@/lib/jobs";
 import { applicationLogoKey } from "@/lib/storage/keys";
-import { putObject } from "@/lib/storage/r2";
+import { putObject } from "@/lib/storage/s3";
 import { parseInput, runAction } from "@/server/action-utils";
+import { uniqueApplicationSlug } from "@/server/services/applications";
 
 const schema = z.object({
   name: z.string().trim().min(2, "Name is required.").max(80),
@@ -20,16 +20,6 @@ const schema = z.object({
   brandColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a hex colour like #2563EB."),
   sortOrder: z.number().int().min(0).max(1000).optional(),
 });
-
-async function uniqueSlug(name: string, excludeId?: string) {
-  const base = slugify(name);
-  let slug = base;
-  for (let i = 2; ; i++) {
-    const existing = await prisma.application.findUnique({ where: { slug }, select: { id: true } });
-    if (!existing || existing.id === excludeId) return slug;
-    slug = `${base}-${i}`;
-  }
-}
 
 function revalidateApps(id?: string) {
   revalidatePath("/applications");
@@ -48,7 +38,7 @@ export async function createApplicationAction(input: z.input<typeof schema>) {
     const app = await prisma.application.create({
       data: {
         name: data.name,
-        slug: await uniqueSlug(data.name),
+        slug: await uniqueApplicationSlug(prisma, data.name),
         description: data.description || null,
         brandColor: data.brandColor.toUpperCase(),
         sortOrder: data.sortOrder ?? (maxOrder._max.sortOrder ?? 0) + 1,
@@ -80,7 +70,7 @@ export async function updateApplicationAction(id: string, input: z.input<typeof 
       where: { id },
       data: {
         name: data.name,
-        slug: app.name === data.name ? app.slug : await uniqueSlug(data.name, id),
+        slug: app.name === data.name ? app.slug : await uniqueApplicationSlug(prisma, data.name, id),
         description: data.description || null,
         brandColor: data.brandColor.toUpperCase(),
         ...(data.sortOrder !== undefined ? { sortOrder: data.sortOrder } : {}),

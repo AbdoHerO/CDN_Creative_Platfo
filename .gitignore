@@ -40,11 +40,15 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# allow the documented env template
-!.env.example
+# real .env.dev / .env.prod stay local; commit only the templates
+!.env.dev.example
+!.env.prod.example
 
 # generated Prisma client (rebuilt by `prisma generate` / postinstall)
 /src/generated
+
+# pdf.js assets copied by scripts/copy-pdfjs.mjs
+/public/pdfjs
 
 # test artifacts
 /test-results

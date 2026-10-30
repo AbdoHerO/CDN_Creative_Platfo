@@ -1,12 +1,14 @@
 import { CheckCircle2, XCircle } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { BadgeManager } from "@/components/badges/badge-manager";
 import { PageHeader } from "@/components/common/page-header";
 import { PlatformSettingsForm } from "@/components/settings/platform-settings-form";
 import { PreferencesForm } from "@/components/settings/preferences-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUser } from "@/lib/auth/current-user";
+import { prisma } from "@/lib/db";
 import { getEnv, getStorageConfig } from "@/lib/env";
 import { formatNumber, timeAgo } from "@/lib/format";
 import { can } from "@/lib/permissions";
@@ -18,6 +20,13 @@ export const metadata: Metadata = { title: "Settings" };
 export default async function SettingsPage() {
   const user = await requireUser();
   const isAdmin = can(user.role, "settings.manage");
+  const canManageBadges = can(user.role, "badge.manage");
+  const badges = canManageBadges
+    ? await prisma.badge.findMany({
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        select: { id: true, name: true, color: true, _count: { select: { creatives: true } } },
+      })
+    : [];
   const env = getEnv();
   const storage = getStorageConfig();
   const [settings, health] = isAdmin ? await Promise.all([getSettings(), getWorkerHealth()]) : [null, null];
@@ -36,6 +45,21 @@ export default async function SettingsPage() {
             <PreferencesForm showPreviewVersions={user.showPreviewVersions} libraryView={user.libraryView} />
           </CardContent>
         </Card>
+
+        {canManageBadges && (
+          <Card id="badges">
+            <CardHeader>
+              <CardTitle className="text-base">Badges</CardTitle>
+              <CardDescription>
+                Labels shown on creatives, such as Motion graphique, Higgsfield or 3D. Switch them on from a creative page; imports add a badge
+                automatically when its name is part of the file name.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <BadgeManager badges={badges.map((b) => ({ id: b.id, name: b.name, color: b.color, count: b._count.creatives }))} />
+            </CardContent>
+          </Card>
+        )}
 
         {isAdmin && settings && (
           <>
@@ -56,7 +80,7 @@ export default async function SettingsPage() {
               </CardHeader>
               <CardContent>
                 <dl className="grid gap-4 text-sm sm:grid-cols-2">
-                  <Status ok={!!storage} label="Cloudflare R2 storage" detail={storage ? `Bucket ${storage.bucket} · ${new URL(storage.endpoint).host}` : "Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET"} />
+                  <Status ok={!!storage} label="RustFS (S3) storage" detail={storage ? `Bucket ${storage.bucket} · ${new URL(storage.endpoint).host}` : "Set URL_RUSTFS, BUCKET_NAME, ACCESS_KEY, SECRET_KEY"} />
                   <Status
                     ok={!workerStalled && failed24h === 0}
                     label="Background worker"

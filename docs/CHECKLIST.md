@@ -11,7 +11,7 @@ Status values: **COMPLETED**, **IN PROGRESS**, **NOT STARTED**, **BLOCKED** (gen
 | 2 | PostgreSQL + Prisma schema, migrations, seed (4 applications, roles, admin) | COMPLETED | `prisma migrate deploy`, seed run, I (all suites run on migrated DB) |
 | 3 | Secure authentication (argon2id, DB sessions, change-password flow) | COMPLETED | I `auth.test.ts`, E authentication specs |
 | 4 | RBAC enforced server-side (Admin/Manager/Creator/Viewer + per-application access) | COMPLETED | U `permissions.test.ts`, I visibility/workflow/upload tests, E role-based access specs |
-| 5 | Environment variables for all secrets; no hard-coded config | COMPLETED | `src/lib/env.ts` (Zod), `.env.example` |
+| 5 | Environment variables for all secrets; no hard-coded config | COMPLETED | `src/lib/env.ts` (Zod), `src/lib/load-env.ts` (`.env.dev` / `.env.prod`), `.env.dev.example`, `.env.prod.example` |
 | 6 | Collapsible sidebar with all 11 navigation entries; top bar with search, notifications, profile, quick upload | COMPLETED | manual screenshots, E navigation assertions |
 | 7 | All 19 required pages (login, dashboard, library, details, upload, applications (+details), campaigns (+details), pending, approved, declined, archived, team, activity, notifications, storage, settings, profile) | COMPLETED | production build route list; page crawl (all 200, no console errors) |
 
@@ -30,12 +30,12 @@ Status values: **COMPLETED**, **IN PROGRESS**, **NOT STARTED**, **BLOCKED** (gen
 | # | Requirement | Status | Verified by |
 |---|---|---|---|
 | 13 | Originals preserved byte-for-byte (no compression/resize/re-encode) | COMPLETED | I SHA-256 of stored object = original; E downloaded file hash = uploaded file hash |
-| 14 | Direct upload to R2; drag-and-drop; multiple files; progress; cancel; retry; resume; multipart; size & type validation | COMPLETED | I multipart + resume + cancel tests; E upload spec |
+| 14 | Direct upload to object storage (RustFS); drag-and-drop; multiple files; progress; cancel; retry; resume; multipart; size & type validation | COMPLETED | I multipart + resume + cancel tests; E upload spec |
 | 15 | Content validation (magic bytes) | COMPLETED | U sniffing tests; I + E disguised `.mp4` rejected |
 | 16 | Checksums for integrity | COMPLETED | I worker verifies SHA-256, mismatch flagged + notified; E "Verified" badge |
 | 17 | Thumbnails/previews generated separately via background jobs | COMPLETED | I `worker.test.ts` (separate WebP object, original untouched) |
 | 18 | Signed URLs; credentials never exposed; bucket never public | COMPLETED | code review, E download via presigned redirect |
-| 19 | Cloudflare R2 live verification | **BLOCKED** (credentials not available in the build environment) | Integration fully implemented and exercised end-to-end against an S3-compatible server. Run `npm run storage:setup` and the E2E suite against the production bucket. |
+| 19 | RustFS (S3) live verification | COMPLETED (development bucket) | `storage:setup` applied CORS on the RustFS bucket; E2E suite passed against it (direct browser uploads, previews, byte-identical download; worker marked files Verified/Ready with thumbnails). Repeat against the production bucket before go-live. |
 
 ## Versions and ZIP import
 
@@ -47,7 +47,23 @@ Status values: **COMPLETED**, **IN PROGRESS**, **NOT STARTED**, **BLOCKED** (gen
 | 23 | Multiple full/preview/variant versions with all required file metadata | COMPLETED | I `versions.test.ts`, worker metadata tests |
 | 24 | "Show preview versions" global filter (off by default; previews labelled when on; accessible on details page) | COMPLETED | I library preview test; E toggle spec |
 | 25 | Version selector with separate preview and download per version | COMPLETED | E lifecycle spec |
-| 26 | ZIP import: secure extraction, path traversal protection, format detection, `_preview` detection, application/campaign suggestions, review before confirm, upload to R2, optional archive retention | COMPLETED | U ZIP safety; I hostile archive import; manual review UI |
+| 26 | ZIP import: secure extraction, path traversal protection, format detection, `_preview` detection, application/campaign suggestions, review before confirm, upload to storage, optional archive retention | COMPLETED | U ZIP safety; I hostile archive import; manual review UI |
+
+## Import, badges and replacement
+
+| # | Requirement | Status | Verified by |
+|---|---|---|---|
+| 40 | ZIP import of `data_creatives/<platform>/{banners,videos}`: platform from folder name, banners → Banner category | COMPLETED | U `import-layout.test.ts`; I data_creatives import; manual walkthrough on RustFS |
+| 41 | `_preview` / `-preview` / middle `preview` marks the lite version; `_reel` / `_final` names still pair | COMPLETED | U naming + pairing of the real 85-file folder (34 previews, all paired) |
+| 42 | A new platform folder creates the platform on confirmation (administrators only) | COMPLETED | I import test; manual walkthrough |
+| 43 | Each import adds new creatives, never replaces; duplicate names get (2), (3)… | COMPLETED | U `nextFreeName`; I import test |
+| 44 | Badges (Motion graphique, Higgsfield, 3D, Sans miniature…): shown on cards and pages, one-click edit, filter, management in Settings, auto-detected from file names on import | COMPLETED | U badge detection; I badge permissions; manual walkthrough |
+| 45 | Replace a video with another: warning before confirming, old file and thumbnails deleted from storage, space freed, version number kept | COMPLETED | I replace test; manual walkthrough (old objects confirmed deleted from RustFS) |
+| 46 | Template ZIP download next to the import, built from the current platforms | COMPLETED | manual walkthrough (template contents checked) |
+| 47 | Reels-style library (9:16 cards) with a muted hover preview (lite version first) | COMPLETED | E library specs; manual walkthrough (hover playback confirmed on RustFS) |
+| 48 | Library filter banner: platforms, validation (approved / not yet / declined), with or without preview, live counts | COMPLETED | I `library.test.ts` banner filters and counts; manual walkthrough |
+| 49 | Modern video player (custom controls, speed, PiP, full screen, keyboard) | COMPLETED | manual walkthrough (playback confirmed) |
+| 50 | Badges chosen before import (per creative and in bulk, create with colour) and after import on the creative page | COMPLETED | I import test (reviewed badges applied); manual walkthrough |
 
 ## Workflow, team and management
 
@@ -62,7 +78,7 @@ Status values: **COMPLETED**, **IN PROGRESS**, **NOT STARTED**, **BLOCKED** (gen
 | 33 | Activity history (uploads, deletions, edits, status changes, approvals, rejections, versions, downloads, user changes) — searchable, filterable, exportable | COMPLETED | I activity assertions; E activity log check |
 | 34 | Notifications (approved, declined, changes requested, new submission) with read/unread | COMPLETED | I workflow notifications; E notification check |
 | 35 | Dashboard with real statistics (totals, by application, by status, recent uploads/approvals/activity, storage, pending overview) | COMPLETED | manual screenshots (values match DB) |
-| 36 | Storage management (total, by application, by category, full vs preview, files, creatives) from DB records + R2 reconciliation | COMPLETED | E storage spec; manual |
+| 36 | Storage management (total, by application, by category, full vs preview, files, creatives) from DB records + bucket reconciliation | COMPLETED | E storage spec; manual |
 | 37 | Security: rate limiting, CSRF, CSP, ZIP protection, audit logging | COMPLETED | I rate limit; E cross-origin block; U ZIP safety |
 | 38 | Performance: indexed queries, trigram search, pagination, lazy thumbnails, background jobs | COMPLETED | schema indexes; design |
 | 39 | Deployment artifacts and documentation | COMPLETED | `Dockerfile`, `docker-compose.yml`, CI workflow, README, this file. The standalone server was run and verified; Docker images could not be built here (no Docker daemon). |
@@ -73,10 +89,10 @@ Status values: **COMPLETED**, **IN PROGRESS**, **NOT STARTED**, **BLOCKED** (gen
 |---|---|---|
 | ESLint | `npm run lint` | clean |
 | TypeScript | `npm run typecheck` | clean |
-| Unit (Vitest) | `npx vitest run --project unit` | 53 passed |
-| Integration (Vitest, real PostgreSQL 16 + S3-compatible server) | `npx vitest run --project integration` | 50 passed |
-| End-to-end (Playwright, production build, worker running) | `npm run test:e2e` | 22 passed |
-| Production build | `npm run build` | success (36 routes) |
+| Unit (Vitest) | `npx vitest run --project unit` | 60 passed |
+| Integration (Vitest, real PostgreSQL 16 + S3-compatible emulator) | `npx vitest run --project integration` | 56 passed |
+| End-to-end (Playwright, dev server + worker, RustFS bucket) | `npm run test:e2e` | 22 passed |
+| Production build | `npm run build` | success (37 routes) |
 | Dependency audit | `npm audit --omit=dev` | 0 vulnerabilities |
 
 Bugs found and fixed by these tests: a production CSP that blocked WebAssembly (in-browser checksums); a shared login rate-limit bucket that could lock everyone out behind a proxy; a race in the preview-visibility toggle; chart captions that exposed internal ids to screen readers.

@@ -1,22 +1,26 @@
 "use client";
 
-import { AlertTriangle, Ban, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, Ban, Check, CheckCircle2, Minus, Sparkles, Tags } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
+import { BadgeSelect } from "@/components/badges/badge-select";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import type { CreativeCategory, CreativeStatus, MediaType, VersionType } from "@/generated/prisma/enums";
-import { CATEGORY_LABELS, CATEGORY_ORDER, STATUS_LABELS, VERSION_TYPE_LABELS } from "@/lib/constants";
+import type { CreativeCategory, MediaType, VersionType } from "@/generated/prisma/enums";
+import { CATEGORY_LABELS, CATEGORY_ORDER, VERSION_TYPE_LABELS } from "@/lib/constants";
 import { resolveAssociations, type Association } from "@/lib/files/matching";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { cancelImportAction, confirmImportAction } from "@/server/actions/imports";
+import type { BadgeView } from "@/server/services/badges";
 
 type ReviewItem = {
   id: string;
@@ -31,15 +35,21 @@ type ReviewItem = {
   targetCreativeId: string | null;
   creativeName: string;
   category: CreativeCategory;
-  applicationId: string;
+  applicationId: string | null;
+  /** Platform folder with no application yet (created on confirmation). */
+  newApplicationName: string | null;
   campaignId: string | null;
+  badgeIds: string[];
   suggestedApplicationId: string | null;
   suggestedCampaignId: string | null;
   needsReview: boolean;
   note: string | null;
 };
 
-type State = ReviewItem & { include: boolean; association: Association | null };
+/** `platform` is an application id, or `new:<name>` for a platform created on confirmation. */
+type State = ReviewItem & { include: boolean; association: Association | null; platform: string };
+
+const NEW = "new:";
 
 function initialAssociation(i: ReviewItem): Association | null {
   if (i.needsReview) return null; // the user must decide
@@ -48,7 +58,7 @@ function initialAssociation(i: ReviewItem): Association | null {
   return { kind: "withFile", clientId: i.groupKey };
 }
 
-const encode = (a: Association | null) => (!a ? "" : a.kind === "new" ? "new" : a.kind === "withFile" ? `with:${a.clientId}` : `existing:${a.creativeId}`);
+const encode = (a: Association | null) => (!a ? "" : a.kind === "new" ? "new" : a.kind === "withFile" ? `with:${a.clientId}` : "");
 
 export function ImportReview({
   batchId,
@@ -56,18 +66,32 @@ export function ImportReview({
   rejected,
   applications,
   campaigns,
-  candidates,
+  canCreatePlatforms,
+  badges,
+  canCreateBadges,
 }: {
   batchId: string;
   items: ReviewItem[];
   rejected: { id: string; entryPath: string; reason: string; sizeBytes: number }[];
   applications: { id: string; name: string; brandColor: string }[];
   campaigns: { id: string; name: string; applicationId: string }[];
-  candidates: { id: string; name: string; status: CreativeStatus; matchKey: string; applicationId: string; hasFull: boolean }[];
+  canCreatePlatforms: boolean;
+  badges: BadgeView[];
+  canCreateBadges: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [rows, setRows] = useState<State[]>(() => items.map((i) => ({ ...i, include: true, association: initialAssociation(i) })));
+  const [rows, setRows] = useState<State[]>(() =>
+    items.map((i) => ({
+      ...i,
+      include: true,
+      association: initialAssociation(i),
+      platform: i.applicationId ?? `${NEW}${i.newApplicationName ?? ""}`,
+    })),
+  );
+  const [catalog, setCatalog] = useState(badges);
+  const addToCatalog = (b: BadgeView) => setCatalog((list) => (list.some((x) => x.id === b.id) ? list : [...list, b]));
+  const newPlatformNames = [...new Set(items.flatMap((i) => (i.newApplicationName ? [i.newApplicationName] : [])))];
 
   const patch = (id: string, update: Partial<State>) => setRows((list) => list.map((r) => (r.id === id ? { ...r, ...update } : r)));
   const included = rows.filter((r) => r.include);
@@ -75,6 +99,25 @@ export function ImportReview({
   const undecided = included.filter((r) => !resolved.get(r.id));
   const newCreatives = new Set([...resolved.values()].flatMap((r) => (r?.kind === "new" ? [r.groupKey] : []))).size;
   const totalBytes = included.reduce((s, r) => s + r.sizeBytes, 0);
+  const creatingPlatforms = [...new Set(included.flatMap((r) => (r.platform.startsWith(NEW) ? [r.platform.slice(NEW.length)] : [])))];
+  const blockedPlatforms = !canCreatePlatforms && creatingPlatforms.length > 0;
+  // A file's badges are those of the creative it belongs to (its group leader).
+  const leaderOf = (r: State) => {
+    const res = resolved.get(r.id);
+    return res?.kind === "new" ? rows.find((x) => x.id === res.groupKey) : undefined;
+  };
+  const leaders = included.filter((r) => leaderOf(r)?.id === r.id);
+  const toggleBadgeForAll = (badgeId: string) => {
+    const ids = new Set(leaders.map((l) => l.id));
+    const allHave = leaders.length > 0 && leaders.every((l) => l.badgeIds.includes(badgeId));
+    setRows((list) =>
+      list.map((r) =>
+        ids.has(r.id)
+          ? { ...r, badgeIds: allHave ? r.badgeIds.filter((b) => b !== badgeId) : [...new Set([...r.badgeIds, badgeId])] }
+          : r,
+      ),
+    );
+  };
 
   const confirm = () =>
     startTransition(async () => {
@@ -85,8 +128,10 @@ export function ImportReview({
           versionType: r.versionType,
           creativeName: r.creativeName.trim() || r.filename,
           category: r.category,
-          applicationId: r.applicationId,
-          campaignId: r.campaignId,
+          applicationId: r.platform.startsWith(NEW) ? null : r.platform,
+          newApplicationName: r.platform.startsWith(NEW) ? r.platform.slice(NEW.length) : null,
+          campaignId: r.platform.startsWith(NEW) ? null : r.campaignId,
+          badgeIds: leaderOf(r)?.badgeIds ?? [],
           association: r.include ? r.association : null,
         })),
       });
@@ -105,7 +150,8 @@ export function ImportReview({
             {rejected.length > 0 && ` · ${rejected.length} rejected`}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <BulkBadges catalog={catalog} leaders={leaders} onToggle={toggleBadgeForAll} />
           <ConfirmDialog
             trigger={
               <Button variant="outline" disabled={pending}>
@@ -125,12 +171,24 @@ export function ImportReview({
               router.refresh();
             }}
           />
-          <Button onClick={confirm} disabled={pending || included.length === 0 || undecided.length > 0} data-testid="confirm-import">
+          <Button
+            onClick={confirm}
+            disabled={pending || included.length === 0 || undecided.length > 0 || blockedPlatforms}
+            data-testid="confirm-import"
+          >
             {pending ? <Spinner /> : <CheckCircle2 />}
             Import {included.length} file{included.length === 1 ? "" : "s"}
           </Button>
         </div>
       </div>
+      {creatingPlatforms.length > 0 && (
+        <p className={cn("flex items-center gap-2 text-sm", blockedPlatforms ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground")}>
+          {blockedPlatforms ? <AlertTriangle className="size-4" /> : <Sparkles className="size-4" />}
+          {blockedPlatforms
+            ? `Only an administrator can create ${creatingPlatforms.map((n) => `“${n}”`).join(", ")}. Choose an existing platform for these files.`
+            : `New platform${creatingPlatforms.length > 1 ? "s" : ""} created on import: ${creatingPlatforms.map((n) => `“${n}”`).join(", ")}.`}
+        </p>
+      )}
       {undecided.length > 0 && (
         <p className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
           <AlertTriangle className="size-4" /> {undecided.length} file(s) need a decision about which creative they belong to.
@@ -152,6 +210,7 @@ export function ImportReview({
                 <th className="px-3 py-2 font-medium">File</th>
                 <th className="px-3 py-2 font-medium">Version</th>
                 <th className="px-3 py-2 font-medium">Creative</th>
+                <th className="px-3 py-2 font-medium">Badges</th>
                 <th className="px-3 py-2 font-medium">Application</th>
                 <th className="px-3 py-2 font-medium">Campaign</th>
                 <th className="px-3 py-2 font-medium">Category</th>
@@ -159,8 +218,8 @@ export function ImportReview({
             </thead>
             <tbody className="divide-y">
               {rows.map((r) => {
-                const peers = rows.filter((o) => o.id !== r.id && o.include && o.applicationId === r.applicationId && o.matchKey === r.matchKey);
-                const cands = candidates.filter((c) => c.applicationId === r.applicationId && c.matchKey === r.matchKey);
+                const peers = rows.filter((o) => o.id !== r.id && o.include && o.platform === r.platform && o.matchKey === r.matchKey);
+                const isNewPlatform = r.platform.startsWith(NEW);
                 const leads = r.association?.kind === "new";
                 const needsDecision = r.include && !resolved.get(r.id);
                 return (
@@ -200,14 +259,7 @@ export function ImportReview({
                       <Select
                         value={encode(r.association)}
                         onValueChange={(v) =>
-                          patch(r.id, {
-                            association:
-                              v === "new"
-                                ? { kind: "new", groupKey: r.id }
-                                : v.startsWith("with:")
-                                  ? { kind: "withFile", clientId: v.slice(5) }
-                                  : { kind: "existing", creativeId: v.slice(9) },
-                          })
+                          patch(r.id, { association: v === "new" ? { kind: "new", groupKey: r.id } : { kind: "withFile", clientId: v.slice(5) } })
                         }
                       >
                         <SelectTrigger size="sm" className={cn("w-[230px]", needsDecision && "border-amber-400")}>
@@ -228,20 +280,6 @@ export function ImportReview({
                               </SelectGroup>
                             </>
                           )}
-                          {cands.length > 0 && (
-                            <>
-                              <SelectSeparator />
-                              <SelectGroup>
-                                <SelectLabel>Existing creative</SelectLabel>
-                                {cands.map((c) => (
-                                  <SelectItem key={c.id} value={`existing:${c.id}`}>
-                                    {c.name} · {STATUS_LABELS[c.status]}
-                                    {!c.hasFull ? " · preview only" : ""}
-                                  </SelectItem>
-                                ))}
-                              </SelectGroup>
-                            </>
-                          )}
                         </SelectContent>
                       </Select>
                       {leads && (
@@ -254,9 +292,23 @@ export function ImportReview({
                         />
                       )}
                     </td>
+                    <td className="min-w-[200px] px-3 py-2 align-top">
+                      {leads ? (
+                        <BadgeSelect
+                          catalog={catalog}
+                          value={r.badgeIds}
+                          onChange={(ids) => patch(r.id, { badgeIds: ids })}
+                          onCreated={addToCatalog}
+                          canCreate={canCreateBadges}
+                          disabled={!r.include}
+                        />
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Same as its full version</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 align-top">
-                      <Select value={r.applicationId} onValueChange={(v) => patch(r.id, { applicationId: v, campaignId: null, association: r.association?.kind === "existing" ? null : r.association })}>
-                        <SelectTrigger size="sm" className="w-[150px]">
+                      <Select value={r.platform} onValueChange={(v) => patch(r.id, { platform: v, campaignId: null })}>
+                        <SelectTrigger size="sm" className="w-[170px]">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -266,19 +318,41 @@ export function ImportReview({
                               {a.name}
                             </SelectItem>
                           ))}
+                          {newPlatformNames.length > 0 && (
+                            <>
+                              <SelectSeparator />
+                              <SelectGroup>
+                                <SelectLabel>New platform</SelectLabel>
+                                {newPlatformNames.map((n) => (
+                                  <SelectItem key={n} value={`${NEW}${n}`}>
+                                    <Sparkles className="size-3" />
+                                    {n}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            </>
+                          )}
                         </SelectContent>
                       </Select>
-                      {r.suggestedApplicationId === r.applicationId && <p className="mt-1 text-[11px] text-muted-foreground">From folder name</p>}
+                      {isNewPlatform ? (
+                        <p className="mt-1 text-[11px] text-muted-foreground">New platform, from folder name</p>
+                      ) : (
+                        r.suggestedApplicationId === r.platform && <p className="mt-1 text-[11px] text-muted-foreground">From folder name</p>
+                      )}
                     </td>
                     <td className="px-3 py-2 align-top">
-                      <Select value={r.campaignId ?? "none"} onValueChange={(v) => patch(r.id, { campaignId: v === "none" ? null : v })}>
+                      <Select
+                        value={isNewPlatform ? "none" : (r.campaignId ?? "none")}
+                        onValueChange={(v) => patch(r.id, { campaignId: v === "none" ? null : v })}
+                        disabled={isNewPlatform}
+                      >
                         <SelectTrigger size="sm" className="w-[170px]">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">No campaign</SelectItem>
                           {campaigns
-                            .filter((c) => c.applicationId === r.applicationId)
+                            .filter((c) => c.applicationId === r.platform)
                             .map((c) => (
                               <SelectItem key={c.id} value={c.id}>
                                 {c.name}
@@ -326,5 +400,44 @@ export function ImportReview({
         </div>
       )}
     </div>
+  );
+}
+
+/** Add (or remove) one badge on every selected creative of the import at once. */
+function BulkBadges({ catalog, leaders, onToggle }: { catalog: BadgeView[]; leaders: { badgeIds: string[] }[]; onToggle: (badgeId: string) => void }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" disabled={leaders.length === 0} data-testid="bulk-badges">
+          <Tags /> Badges
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-72 p-0" align="end">
+        <p className="border-b px-3 py-2 text-xs text-muted-foreground">
+          Apply to all {leaders.length} selected creative{leaders.length === 1 ? "" : "s"}
+        </p>
+        <Command>
+          <CommandInput placeholder="Search badges…" />
+          <CommandList className="max-h-72">
+            <CommandEmpty>No badge found.</CommandEmpty>
+            <CommandGroup>
+              {catalog.map((b) => {
+                const count = leaders.filter((l) => l.badgeIds.includes(b.id)).length;
+                const all = count === leaders.length && count > 0;
+                return (
+                  <CommandItem key={b.id} value={b.name} onSelect={() => onToggle(b.id)}>
+                    <span className="flex size-4 shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: b.color }}>
+                      {all ? <Check className="size-2.5 text-white" strokeWidth={3} /> : count > 0 ? <Minus className="size-2.5 text-white" strokeWidth={3} /> : null}
+                    </span>
+                    <span className="flex-1 truncate">{b.name}</span>
+                    {count > 0 && <span className="text-xs tabular-nums text-muted-foreground">{count}</span>}
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }

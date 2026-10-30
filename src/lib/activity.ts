@@ -51,6 +51,7 @@ export const ACTIVITY_LABELS: Record<ActivityAction, string> = {
   FILE_DELETED: "File deleted",
   FILE_MOVED: "File moved",
   FILE_SET_CURRENT: "Current version changed",
+  FILE_REPLACED: "File replaced",
   FILE_DOWNLOADED: "Downloaded",
   FILE_INTEGRITY_FAILED: "Integrity check failed",
   APPLICATION_CREATED: "Application created",

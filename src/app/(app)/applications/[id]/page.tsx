@@ -15,7 +15,7 @@ import { CAMPAIGN_STATUS_LABELS } from "@/lib/constants";
 import { prisma } from "@/lib/db";
 import { formatBytes, formatDate } from "@/lib/format";
 import { can, hasApplicationAccess } from "@/lib/permissions";
-import { trySignedGetUrl } from "@/lib/storage/r2";
+import { trySignedGetUrl } from "@/lib/storage/s3";
 import { creativeVisibilityWhere } from "@/lib/visibility";
 import { storageByApplication } from "@/server/queries/applications";
 

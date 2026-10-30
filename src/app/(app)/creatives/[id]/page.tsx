@@ -2,12 +2,15 @@ import { CheckCircle2, Download, ExternalLink, ShieldAlert, ShieldCheck, ShieldQ
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { BadgeChips } from "@/components/badges/badge-chip";
+import { BadgePicker } from "@/components/badges/badge-picker";
 import { AppBadge } from "@/components/common/app-badge";
 import { PageHeader } from "@/components/common/page-header";
 import { CreativeMoreActions } from "@/components/creatives/creative-more-actions";
 import { CreativeViewer } from "@/components/creatives/creative-viewer";
 import { EditCreativeDialog } from "@/components/creatives/edit-creative-dialog";
 import { LinkPreviewCard } from "@/components/creatives/link-preview-card";
+import { ReplaceFileDialog } from "@/components/creatives/replace-file-dialog";
 import { StatusBadge } from "@/components/creatives/status-badge";
 import { UploadVersionDialog } from "@/components/creatives/upload-version-dialog";
 import { ValidationTimeline } from "@/components/creatives/validation-timeline";
@@ -20,9 +23,11 @@ import { requireUser } from "@/lib/auth/current-user";
 import { CATEGORY_LABELS, CHANNEL_LABELS, VERSION_TYPE_LABELS } from "@/lib/constants";
 import { prisma } from "@/lib/db";
 import { formatBytes, formatDate, formatDateTime, formatDuration, formatResolution, timeAgo } from "@/lib/format";
+import { can } from "@/lib/permissions";
 import { getSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { getCreativeDetail, type CreativeDetailFile } from "@/server/queries/creative-detail";
+import { listBadges } from "@/server/services/badges";
 
 export async function generateMetadata({ params }: PageProps<"/creatives/[id]">): Promise<Metadata> {
   const { id } = await params;
@@ -43,13 +48,15 @@ export default async function CreativePage({ params, searchParams }: PageProps<"
     creative.files.find((f) => f.versionType === "PREVIEW" && f.isCurrent) ??
     creative.files[0];
 
-  const [campaigns, tags, settings] = creative.permissions.canEdit
+  const [campaigns, tags, settings, badges] = creative.permissions.canEdit
     ? await Promise.all([
         prisma.campaign.findMany({ where: { applicationId: creative.application.id }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
         prisma.tag.findMany({ orderBy: { name: "asc" }, select: { name: true }, take: 500 }),
         getSettings(),
+        listBadges(),
       ])
-    : [[], [], null];
+    : [[], [], null, []];
+  const resetsApproval = creative.status === "APPROVED" && (settings?.resetApprovalOnNewVersion ?? true);
 
   const currentVersions = (["FULL", "PREVIEW", "VARIANT"] as const).flatMap((t) => creative.files.filter((f) => f.versionType === t && f.isCurrent));
 
@@ -77,6 +84,20 @@ export default async function CreativePage({ params, searchParams }: PageProps<"
             <span>
               Uploaded by {creative.createdBy?.name ?? "Unknown"} {timeAgo(creative.createdAt)}
             </span>
+            {(creative.badges.length > 0 || creative.permissions.canEdit) && (
+              <span className="flex basis-full flex-wrap items-center gap-1.5 pt-1" data-testid="creative-badges">
+                {creative.permissions.canEdit ? (
+                  <BadgePicker
+                    creativeId={creative.id}
+                    badges={badges}
+                    selectedIds={creative.badges.map((b) => b.id)}
+                    canManage={can(user.role, "badge.manage")}
+                  />
+                ) : (
+                  <BadgeChips badges={creative.badges} />
+                )}
+              </span>
+            )}
           </span>
         }
         actions={
@@ -86,7 +107,7 @@ export default async function CreativePage({ params, searchParams }: PageProps<"
               <UploadVersionDialog
                 creativeId={creative.id}
                 applicationId={creative.application.id}
-                resetsApproval={creative.status === "APPROVED" && (settings?.resetApprovalOnNewVersion ?? true)}
+                resetsApproval={resetsApproval}
               />
             )}
             {creative.permissions.canEdit && (
@@ -170,6 +191,16 @@ export default async function CreativePage({ params, searchParams }: PageProps<"
                   </p>
                 </div>
                 <div className="flex gap-2">
+                  {creative.permissions.canEdit && (
+                    <ReplaceFileDialog
+                      key={selected.id}
+                      creativeId={creative.id}
+                      applicationId={creative.application.id}
+                      file={selected}
+                      resetsApproval={resetsApproval && selected.versionType === "FULL" && selected.isCurrent}
+                      trigger
+                    />
+                  )}
                   <Button asChild variant="outline" size="sm">
                     <a href={`/api/files/${selected.id}/preview`} target="_blank" rel="noreferrer">
                       <ExternalLink /> Open original
@@ -243,6 +274,7 @@ export default async function CreativePage({ params, searchParams }: PageProps<"
                               applicationId={creative.application.id}
                               canEdit={creative.permissions.canEdit}
                               canDelete={creative.permissions.canEdit && creative.files.length > 1}
+                              resetsApproval={resetsApproval && f.versionType === "FULL" && f.isCurrent}
                             />
                           </td>
                         </tr>

@@ -1,69 +1,16 @@
-# Local / single-server deployment.
-#
-#   cp .env.example .env            # fill in R2 credentials, APP_URL, seed admin
-#   docker compose up -d db
-#   docker compose run --rm migrate # apply migrations + seed
-#   docker compose up -d web worker
-#
-# For production use a managed PostgreSQL and Cloudflare R2; the optional
-# `minio` service (profile "local-storage") is an S3-compatible stand-in for
-# offline development only.
 services:
-  db:
-    image: postgres:16
+  creative-hub-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: creative-hub-prod:latest
+    container_name: creative-hub-prod
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: cmp
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cmp_dev_password}
-      POSTGRES_DB: cmp
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cmp -d cmp"]
-      interval: 5s
-      retries: 20
+    env_file:
+      - ${ENV_FILE:-.env.prod}
+    networks:
+      - backend.prod
 
-  migrate:
-    build: { context: ., target: worker }
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql://cmp:${POSTGRES_PASSWORD:-cmp_dev_password}@db:5432/cmp?schema=public
-    depends_on: { db: { condition: service_healthy } }
-    command: ["sh", "-c", "npx prisma migrate deploy && npx tsx prisma/seed.ts"]
-    profiles: ["tools"]
-
-  web:
-    build: { context: ., target: web }
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql://cmp:${POSTGRES_PASSWORD:-cmp_dev_password}@db:5432/cmp?schema=public
-    ports: ["3000:3000"]
-    depends_on: { db: { condition: service_healthy } }
-
-  worker:
-    build: { context: ., target: worker }
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql://cmp:${POSTGRES_PASSWORD:-cmp_dev_password}@db:5432/cmp?schema=public
-      WORKER_TMP_DIR: /tmp/cmp
-    volumes:
-      - worker-tmp:/tmp/cmp
-    depends_on: { db: { condition: service_healthy } }
-
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${R2_ACCESS_KEY_ID:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${R2_SECRET_ACCESS_KEY:-minioadmin}
-    ports: ["9000:9000", "9001:9001"]
-    volumes:
-      - miniodata:/data
-    profiles: ["local-storage"]
-
-volumes:
-  pgdata:
-  worker-tmp:
-  miniodata:
+networks:
+  backend.prod:
+    external: true

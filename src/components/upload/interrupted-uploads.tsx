@@ -24,7 +24,7 @@ type RunState = { progress: number; status: "running" | "done" | "error"; error?
 
 /**
  * Uploads interrupted by a closed tab, crash or network loss. Selecting the same
- * local file again resumes from the parts already stored in R2.
+ * local file again resumes from the parts already stored in the bucket.
  */
 export function InterruptedUploads({ disabled }: { disabled?: boolean }) {
   const [uploads, setUploads] = useState<Resumable[]>([]);

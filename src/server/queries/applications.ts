@@ -1,7 +1,7 @@
 import "server-only";
 import type { SessionUser } from "@/lib/auth/session-core";
 import { prisma } from "@/lib/db";
-import { trySignedGetUrl } from "@/lib/storage/r2";
+import { trySignedGetUrl } from "@/lib/storage/s3";
 import { applicationScope, creativeVisibilityWhere } from "@/lib/visibility";
 
 /** Total stored bytes (originals + derived) per application, from database records. */

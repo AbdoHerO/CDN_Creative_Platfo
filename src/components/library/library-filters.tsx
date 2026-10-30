@@ -27,6 +27,9 @@ type Values = {
   type: string;
   format: string;
   tag: string;
+  badge: string;
+  review: string;
+  lite: string;
   uploader: string;
   from: string;
   to: string;
@@ -43,10 +46,13 @@ export function LibraryFilters({
   view,
   showPreviews,
   total,
+  hideApplication,
 }: {
   basePath: string;
   facets: LibraryFacets;
   fixed: { status: boolean; app: boolean; campaign: boolean };
+  /** The platform chips of the library banner replace the application dropdown. */
+  hideApplication?: boolean;
   values: Values;
   view: "grid" | "list";
   showPreviews: boolean;
@@ -95,6 +101,9 @@ export function LibraryFilters({
   if (values.type) chips.push({ key: "type", label: `Type: ${MEDIA_TYPE_LABELS[values.type as keyof typeof MEDIA_TYPE_LABELS]}` });
   if (values.category) chips.push({ key: "category", label: `Category: ${CATEGORY_LABELS[values.category as keyof typeof CATEGORY_LABELS]}` });
   if (values.status && !fixed.status) chips.push({ key: "status", label: `Status: ${STATUS_LABELS[values.status as keyof typeof STATUS_LABELS]}` });
+  if (values.review) chips.push({ key: "review", label: `Validation: ${{ approved: "Approved", waiting: "Not yet approved", declined: "Declined" }[values.review] ?? values.review}` });
+  if (values.lite) chips.push({ key: "lite", label: values.lite === "with" ? "With preview" : "Without preview" });
+  if (values.badge) chips.push({ key: "badge", label: `Badge: ${facets.badges.find((b) => b.slug === values.badge)?.name ?? values.badge}` });
   if (values.tag) chips.push({ key: "tag", label: `Tag: ${facets.tags.find((t) => t.slug === values.tag)?.name ?? values.tag}` });
   if (values.uploader) chips.push({ key: "uploader", label: `Uploaded by: ${facets.uploaders.find((u) => u.id === values.uploader)?.name ?? "user"}` });
   if (values.format) chips.push({ key: "format", label: `Format: ${values.format.toUpperCase()}` });
@@ -141,7 +150,7 @@ export function LibraryFilters({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {!fixed.app && (
+          {!fixed.app && !hideApplication && (
             <FilterSelect
               label="Application"
               value={values.app}
@@ -169,6 +178,14 @@ export function LibraryFilters({
             onChange={(v) => update({ category: v })}
             options={Object.entries(CATEGORY_LABELS).map(([value, label]) => ({ value, label }))}
           />
+          {facets.badges.length > 0 && (
+            <FilterSelect
+              label="Badge"
+              value={values.badge}
+              onChange={(v) => update({ badge: v })}
+              options={facets.badges.map((b) => ({ value: b.slug, label: b.name, color: b.color }))}
+            />
+          )}
           {!fixed.status && (
             <FilterSelect
               label="Status"

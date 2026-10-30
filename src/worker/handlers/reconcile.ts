@@ -2,7 +2,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { logActivity } from "@/lib/activity";
 import { prisma } from "@/lib/db";
 import { KEY_PREFIXES } from "@/lib/storage/keys";
-import { listAllObjects } from "@/lib/storage/r2";
+import { listAllObjects } from "@/lib/storage/s3";
 import { log } from "../log";
 
 /**

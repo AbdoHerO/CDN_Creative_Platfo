@@ -1,0 +1,197 @@
+"use client";
+
+import { BookOpen, FileAudio, FileText, ImageIcon, Loader2, Play, Sparkles, VolumeX } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+import { BadgeChips } from "@/components/badges/badge-chip";
+import { StatusBadge } from "@/components/creatives/status-badge";
+import { formatBytes, formatDuration } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import type { LibraryItem } from "@/server/queries/library";
+
+/** Seconds of the clip played (and looped) while hovering a card. */
+const HOVER_SECONDS = 6;
+/** Short delay so sweeping the mouse across the grid does not start every video. */
+const HOVER_DELAY_MS = 150;
+
+/**
+ * Reels-style library grid: tall cards, the creative fitted on a blurred
+ * backdrop, details over a gradient, and a muted preview on hover (the lite
+ * version when there is one).
+ */
+export function ReelGrid({ items }: { items: LibraryItem[] }) {
+  return (
+    <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5 min-[1800px]:grid-cols-6" data-testid="reel-grid">
+      {items.map((item) => (
+        <li key={item.fileId}>
+          <ReelCard item={item} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ReelCard({ item }: { item: LibraryItem }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [active, setActive] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const canPreview = !!item.hoverVideoUrl;
+  const href = item.versionType === "PREVIEW" ? `/creatives/${item.creativeId}?file=${item.fileId}` : `/creatives/${item.creativeId}`;
+
+  const start = () => {
+    if (!canPreview) return;
+    timer.current = setTimeout(() => setActive(true), HOVER_DELAY_MS);
+  };
+  const stop = () => {
+    if (timer.current) clearTimeout(timer.current);
+    setActive(false);
+    setPlaying(false);
+    setProgress(0);
+    const v = videoRef.current;
+    if (v) {
+      v.pause();
+      v.currentTime = 0;
+    }
+  };
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!active || !v) return;
+    v.muted = true;
+    v.play().catch(() => setPlaying(false));
+  }, [active]);
+
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  const onTime = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    const limit = Math.min(HOVER_SECONDS, v.duration || HOVER_SECONDS);
+    if (v.currentTime >= limit) v.currentTime = 0;
+    setProgress(Math.min(1, v.currentTime / limit));
+  };
+
+  const duration = item.mediaType === "VIDEO" ? formatDuration(item.durationSeconds) : null;
+  const pages = item.mediaType === "DOCUMENT" && item.pageCount ? `${item.pageCount} page${item.pageCount === 1 ? "" : "s"}` : null;
+  const Fallback = item.mediaType === "AUDIO" ? FileAudio : item.mediaType === "DOCUMENT" ? FileText : ImageIcon;
+
+  return (
+    <Link
+      href={href}
+      onMouseEnter={start}
+      onMouseLeave={stop}
+      onFocus={start}
+      onBlur={stop}
+      className="group relative block aspect-[9/16] overflow-hidden rounded-2xl bg-neutral-950 shadow-sm ring-1 ring-black/5 outline-none transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/20 focus-visible:ring-2 focus-visible:ring-primary dark:ring-white/10"
+      aria-label={`${item.name}, ${item.application.name}`}
+      data-testid="reel-card"
+    >
+      {item.thumbnailUrl ? (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={item.thumbnailUrl} alt="" aria-hidden className="absolute inset-0 size-full scale-125 object-cover opacity-60 blur-2xl" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={item.thumbnailUrl}
+            alt=""
+            loading="lazy"
+            className="absolute inset-0 size-full object-contain transition-transform duration-500 group-hover:scale-[1.03]"
+          />
+        </>
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-neutral-800 to-neutral-950 text-white/50">
+          {item.processingStatus === "PENDING" || item.processingStatus === "PROCESSING" ? (
+            <Loader2 className="size-7 animate-spin" />
+          ) : (
+            <Fallback className="size-9" strokeWidth={1.25} />
+          )}
+        </div>
+      )}
+
+      {active && item.hoverVideoUrl && (
+        <video
+          ref={videoRef}
+          src={item.hoverVideoUrl}
+          muted
+          playsInline
+          preload="auto"
+          onPlaying={() => setPlaying(true)}
+          onTimeUpdate={onTime}
+          className={cn("absolute inset-0 size-full object-contain transition-opacity duration-300", playing ? "opacity-100" : "opacity-0")}
+        />
+      )}
+
+      {/* Top: platform and status */}
+      <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 bg-gradient-to-b from-black/55 to-transparent p-2.5 pb-8">
+        <span className="flex min-w-0 items-center gap-1.5 rounded-full bg-black/45 py-0.5 pl-1 pr-2 text-[11px] font-medium text-white backdrop-blur-md">
+          <span className="size-3.5 shrink-0 rounded-full ring-2 ring-white/20" style={{ backgroundColor: item.application.brandColor }} />
+          <span className="truncate">{item.application.name}</span>
+        </span>
+        <StatusBadge status={item.status} className="shrink-0 border-0 shadow-xs" />
+      </div>
+
+      {/* Centre: play hint */}
+      {item.mediaType === "VIDEO" && !playing && (
+        <span
+          className={cn(
+            "absolute left-1/2 top-1/2 flex size-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 text-white ring-1 ring-white/25 backdrop-blur-md transition-all duration-300",
+            active ? "scale-90 opacity-0" : "opacity-0 group-hover:opacity-100",
+          )}
+        >
+          {active ? <Loader2 className="size-5 animate-spin" /> : <Play className="ml-0.5 size-5 fill-current" />}
+        </span>
+      )}
+
+      {/* Centre: document hint */}
+      {item.mediaType === "DOCUMENT" && (
+        <span className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-xs font-semibold text-white opacity-0 ring-1 ring-white/25 backdrop-blur-md transition-opacity duration-300 group-hover:opacity-100">
+          <BookOpen className="size-4" /> Open
+        </span>
+      )}
+
+      {/* Bottom: details */}
+      <div className="absolute inset-x-0 bottom-0 space-y-2 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-3 pt-14 text-white">
+        <BadgeChips badges={item.badges} solid max={3} />
+        <p className="line-clamp-2 text-sm font-semibold leading-snug drop-shadow" title={item.name}>
+          {item.name}
+        </p>
+        <div className="flex items-center justify-between gap-2 text-[11px] text-white/75">
+          <span className="flex min-w-0 items-center gap-1.5 truncate">
+            {duration && duration !== "—" && <span className="tabular rounded bg-white/15 px-1.5 py-px font-medium text-white">{duration}</span>}
+            {pages && <span className="tabular rounded bg-white/15 px-1.5 py-px font-medium text-white">{pages}</span>}
+            <span className="uppercase">{item.extension}</span>
+            <span>·</span>
+            <span>{formatBytes(item.sizeBytes)}</span>
+          </span>
+          {item.extension === "pdf" ? (
+            <span className="shrink-0 rounded bg-rose-500 px-1.5 py-px text-[10px] font-bold tracking-wide text-white">PDF</span>
+          ) : item.versionType === "PREVIEW" ? (
+            <span className="shrink-0 rounded bg-white px-1.5 py-px text-[10px] font-bold tracking-wide text-black">PREVIEW · LITE</span>
+          ) : (
+            item.hasPreview && (
+              <span className="flex shrink-0 items-center gap-1 rounded bg-white/15 px-1.5 py-px text-[10px] font-semibold" title="Has a lite (preview) version">
+                <Sparkles className="size-3" /> LITE
+              </span>
+            )
+          )}
+        </div>
+      </div>
+
+      {/* Hover playback progress */}
+      {active && playing && (
+        <>
+          <span className="absolute right-2.5 top-11 flex items-center gap-1 rounded-full bg-black/45 px-1.5 py-0.5 text-[10px] text-white/90 backdrop-blur">
+            <VolumeX className="size-3" /> Preview
+          </span>
+          <span className="absolute inset-x-0 bottom-0 h-0.5 bg-white/15">
+            <span className="block h-full bg-white transition-[width] duration-200 ease-linear" style={{ width: `${progress * 100}%` }} />
+          </span>
+        </>
+      )}
+    </Link>
+  );
+}

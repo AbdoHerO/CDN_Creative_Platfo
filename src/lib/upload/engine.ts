@@ -5,10 +5,10 @@ import { createSHA256 } from "hash-wasm";
 /**
  * Browser upload engine.
  *
- * - Uploads go straight from the browser to R2 using presigned URLs; the app
+ * - Uploads go straight from the browser to storage (RustFS) using presigned URLs; the app
  *   server only signs requests and never touches the bytes.
  * - Multipart uploads run several parts in parallel, retry failed parts with
- *   exponential backoff, and resume from the parts R2 already has.
+ *   exponential backoff, and resume from the parts storage already has.
  * - A SHA-256 of the original file is computed while uploading; the worker
  *   recomputes it from the stored object to prove nothing was altered.
  */
@@ -162,7 +162,7 @@ async function uploadMultipart(
   const partSize = session.partSize!;
   const partCount = session.partCount!;
 
-  // Resume: ask R2 (via the server) which parts are already stored.
+  // Resume: ask storage (via the server) which parts are already stored.
   const status = await api<{ uploadedParts: { partNumber: number; size: number }[] }>(`/api/uploads/${session.sessionId}`, { signal });
   const expectedSize = (n: number) => (n === partCount ? file.size - partSize * (partCount - 1) : partSize);
   const done = new Set(status.uploadedParts.filter((p) => p.size === expectedSize(p.partNumber)).map((p) => p.partNumber));
