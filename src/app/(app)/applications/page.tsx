@@ -27,22 +27,22 @@ export default async function ApplicationsPage() {
       {apps.length === 0 ? (
         <EmptyState icon={AppWindow} title="No applications" description="Create the first application to start organising creatives." />
       ) : (
-        <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <ul className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3 2xl:grid-cols-4">
           {apps.map((a) => (
             <li key={a.id}>
               <Link
                 href={`/applications/${a.id}`}
-                className="group flex h-full flex-col rounded-xl border bg-card p-5 shadow-xs transition-all hover:-translate-y-px hover:border-foreground/15 hover:shadow-md"
+                className="group flex h-full flex-col rounded-xl border bg-card p-5 shadow-xs transition-all hover:-translate-y-px hover:border-foreground/15 hover:shadow-md max-sm:rounded-2xl max-sm:p-4 max-sm:active:scale-[0.99]"
               >
                 <div className="flex items-start justify-between gap-3">
                   <AppLogo name={a.name} color={a.brandColor} logoUrl={a.logoUrl} className="size-11" />
                   {a.status === "DISABLED" && <Badge variant="secondary">Disabled</Badge>}
                 </div>
-                <div className="mt-4 flex-1 space-y-1">
+                <div className="mt-4 flex-1 space-y-1 max-sm:mt-3">
                   <p className="font-semibold tracking-tight group-hover:text-primary">{a.name}</p>
                   <p className="line-clamp-2 text-sm text-muted-foreground">{a.description ?? "No description."}</p>
                 </div>
-                <dl className="mt-5 grid grid-cols-3 gap-2 border-t pt-4 text-sm">
+                <dl className="mt-5 grid grid-cols-3 gap-2 border-t pt-4 text-sm max-sm:mt-3 max-sm:pt-3">
                   <div>
                     <dt className="text-xs text-muted-foreground">Creatives</dt>
                     <dd className="tabular font-medium">{formatNumber(a.creatives)}</dd>
@@ -56,7 +56,7 @@ export default async function ApplicationsPage() {
                     <dd className="tabular font-medium">{formatBytes(a.storageBytes)}</dd>
                   </div>
                 </dl>
-                <span className="mt-4 h-1 w-full rounded-full" style={{ backgroundColor: a.brandColor }} aria-hidden />
+                <span className="mt-4 h-1 w-full rounded-full max-sm:mt-3" style={{ backgroundColor: a.brandColor }} aria-hidden />
               </Link>
             </li>
           ))}

@@ -2,7 +2,8 @@
  * Background worker: `npm run worker`.
  *
  * Consumes the Postgres job queue (thumbnails, metadata, checksum verification,
- * ZIP analysis/extraction, object deletion, storage reconciliation) and runs
+ * streaming copies of heavy videos, ZIP analysis/extraction, object deletion,
+ * storage reconciliation) and runs
  * periodic maintenance. Run one or more replicas next to the web app.
  */
 import "@/lib/load-env";
@@ -14,6 +15,7 @@ import { deleteObjects } from "@/lib/storage/s3";
 import { analyzeImport, importFailed, runImport } from "./handlers/imports";
 import { processFile, processFileFailed } from "./handlers/process-file";
 import { reconcileFailed, reconcileStorage } from "./handlers/reconcile";
+import { makeStream, makeStreamFailed } from "./handlers/stream-copy";
 import { log } from "./log";
 import { runMaintenance } from "./maintenance";
 import { claimJob, completeJob, failJob, heartbeat, recoverStaleJobs, type ClaimedJob } from "./queue";
@@ -26,6 +28,7 @@ const handlers: { [K in keyof JobPayloads]: Handler<JobPayloads[K]> } = {
   ANALYZE_IMPORT: { run: analyzeImport, onFinalFailure: importFailed },
   RUN_IMPORT: { run: runImport, onFinalFailure: importFailed },
   RECONCILE_STORAGE: { run: reconcileStorage, onFinalFailure: reconcileFailed },
+  MAKE_STREAM: { run: makeStream, onFinalFailure: makeStreamFailed },
 };
 
 const workerId = `${hostname()}:${process.pid}`;

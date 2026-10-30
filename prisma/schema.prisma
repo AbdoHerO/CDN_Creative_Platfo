@@ -732,6 +732,7 @@ enum JobType {
   ANALYZE_IMPORT
   RUN_IMPORT
   RECONCILE_STORAGE
+  MAKE_STREAM
 }
 
 enum JobStatus {

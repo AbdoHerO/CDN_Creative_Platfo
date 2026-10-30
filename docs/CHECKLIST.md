@@ -69,6 +69,14 @@ Status values: **COMPLETED**, **IN PROGRESS**, **NOT STARTED**, **BLOCKED** (gen
 | 53 | Library content tabs: Videos (default), Banners, PDFs, All, with counts | COMPLETED | I `library.test.ts` content tabs; manual walkthrough |
 | 54 | Mobile: no horizontal overflow, bottom navigation, filter sheet, full-screen swipe feed with autoplay | COMPLETED | mobile audit (iPhone 13, every page: no overflow); manual walkthrough (feed autoplay, swipe, back gesture) |
 | 55 | Docker image builds (`npm ci` with Prisma schema), runs migrations, worker service in compose | COMPLETED | deps-stage `prisma generate` and `migrate status` reproduced without Docker |
+| 56 | Phone navigation: bottom bar with a Menu sheet (closes on navigation, outside tap, back); the sidebar closes after navigation | COMPLETED | E `mobile.spec.ts`; iPhone 13 screenshots |
+| 57 | Phone dialogs (edit creative, campaign, workflow…) as bottom sheets: scrollable, buttons pinned and reachable, closable | COMPLETED | E `mobile.spec.ts`; iPhone 13 screenshot of Edit creative (footer inside the screen, close works) |
+| 58 | Pending Validation with the library look: Pending / In review / Drafts tabs with counts, workflow buttons under each card | COMPLETED | E lifecycle (decline from the queue cards), E `mobile.spec.ts` |
+| 59 | Library badge edit mode (admins, managers): edit badges on each card, multi-select, bulk add / remove, bulk submit, any colour | COMPLETED | I `bulkSetBadge` and `submitCreatives`; E `mobile.spec.ts` (bulk add and remove) |
+| 60 | Phone layout of the other pages: Team, Activity and Campaigns as cards, compact headers and tiles, safe areas (notch, home indicator) | COMPLETED (emulated) | mobile audit (iPhone 13, 18 pages: no overflow) and screenshots; not yet checked on a real iPhone |
+| 61 | Install on the home screen (manifest, icons) with an Android / iPhone prompt shown sparingly (after engagement, once per session, 7 then 30-day snooze, stops after 3 or "Don't ask again") | COMPLETED (emulated) | 16 scripted checks on emulated iPhone 13, Pixel 7 and desktop; a real-device install needs the HTTPS deployment |
+| 62 | Fast navigation and cached media: instant loading screens, 30 s client cache, cacheable stable URLs for thumbnails and videos (also on the creative page), lite-only preloading in the feed | COMPLETED | production build on an emulated iPhone 13 throttled to 4G: the screen changes about 50 ms after a tap, pages revisited within 30 s show in about 60 ms with no server request, thumbnails and the creative video come from the browser cache on the next visit (`Cache-Control: private, max-age=7200` confirmed on the RustFS test server); E suite passed against the production build |
+| 63 | Streaming copies of heavy videos (720p H.264, fast start) made by the worker, also for existing videos; used by hover previews, the phone feed and the creative page (Smooth / Original switch); originals and downloads unchanged | COMPLETED | U `stream-copy.test.ts`; I heavy MP4 and MKV copies (fast start, smaller, original untouched, kept on reprocessing) and backfill; dev worker turned the 104.5 MB `winmed_promo_reel_final_v2.mp4` into a 7.1 MB copy in 17 s; phone and desktop playback checked |
 
 ## Workflow, team and management
 
@@ -94,10 +102,10 @@ Status values: **COMPLETED**, **IN PROGRESS**, **NOT STARTED**, **BLOCKED** (gen
 |---|---|---|
 | ESLint | `npm run lint` | clean |
 | TypeScript | `npm run typecheck` | clean |
-| Unit (Vitest) | `npx vitest run --project unit` | 60 passed |
-| Integration (Vitest, real PostgreSQL 16 + S3-compatible emulator) | `npx vitest run --project integration` | 57 passed |
-| End-to-end (Playwright, dev server + worker, RustFS bucket) | `npm run test:e2e` | 22 passed |
-| Production build | `npm run build` | success (37 routes) |
+| Unit (Vitest) | `npx vitest run --project unit` | 63 passed |
+| Integration (Vitest, real PostgreSQL 16 + S3-compatible emulator) | `npx vitest run --project integration` | 64 passed |
+| End-to-end (Playwright, worker, RustFS test bucket; desktop and iPhone 13 viewports) | `npm run test:e2e` | 26 passed on the dev server and 26 passed on the production build |
+| Production build | `npm run build` | success (38 routes) |
 | Dependency audit | `npm audit --omit=dev` | 0 vulnerabilities |
 
 Bugs found and fixed by these tests: a production CSP that blocked WebAssembly (in-browser checksums); a shared login rate-limit bucket that could lock everyone out behind a proxy; a race in the preview-visibility toggle; chart captions that exposed internal ids to screen readers.

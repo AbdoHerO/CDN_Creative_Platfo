@@ -75,6 +75,8 @@ export function proxy(request: NextRequest) {
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
   response.headers.set("Cross-Origin-Opener-Policy", "same-origin");
+  // Pages stream (loading skeleton first, then content): ask nginx-style proxies not to buffer.
+  response.headers.set("X-Accel-Buffering", "no");
   if (process.env.NODE_ENV === "production") {
     response.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
   }
@@ -84,8 +86,9 @@ export function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     {
-      // Static assets (including the pdf.js runtime in /pdfjs) skip the proxy.
-      source: "/((?!_next/static|_next/image|pdfjs/|favicon.ico|robots.txt).*)",
+      // Static assets (pdf.js runtime, app icons, manifest) skip the proxy: the
+      // install prompt fetches the manifest and icons before anyone signs in.
+      source: "/((?!_next/static|_next/image|pdfjs/|icons/|manifest.webmanifest|favicon.ico|robots.txt).*)",
       missing: [{ type: "header", key: "next-router-prefetch" }],
     },
   ],

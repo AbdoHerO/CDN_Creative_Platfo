@@ -3,10 +3,15 @@ import { BadgeChips } from "@/components/badges/badge-chip";
 import { AppBadge } from "@/components/common/app-badge";
 import { MediaThumbnail } from "@/components/creatives/media-thumbnail";
 import { StatusBadge } from "@/components/creatives/status-badge";
+import { WorkflowActions } from "@/components/creatives/workflow-actions";
 import { CATEGORY_LABELS } from "@/lib/constants";
 import { formatBytes, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import type { WorkflowAction } from "@/lib/workflow";
 import type { LibraryItem } from "@/server/queries/library";
+import { ListRowBadges } from "./edit-mode";
+
+const QUEUE_INCLUDE: WorkflowAction[] = ["submit", "startReview", "approve", "requestChanges", "decline", "withdraw"];
 
 function hrefFor(item: LibraryItem) {
   return item.versionType === "PREVIEW" ? `/creatives/${item.creativeId}?file=${item.fileId}` : `/creatives/${item.creativeId}`;
@@ -40,7 +45,7 @@ function PreviewLabel() {
   );
 }
 
-export function CreativeList({ items }: { items: LibraryItem[] }) {
+export function CreativeList({ items, actions }: { items: LibraryItem[]; actions?: Record<string, WorkflowAction[]> }) {
   return (
     <div className="overflow-hidden rounded-xl border bg-card shadow-xs">
       <div className="overflow-x-auto">
@@ -54,6 +59,7 @@ export function CreativeList({ items }: { items: LibraryItem[] }) {
               <th className="px-3 py-2.5 font-medium">Versions</th>
               <th className="px-3 py-2.5 font-medium">Status</th>
               <th className="px-4 py-2.5 font-medium">Uploaded</th>
+              {actions && <th className="px-4 py-2.5 font-medium">Validation</th>}
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -73,9 +79,11 @@ export function CreativeList({ items }: { items: LibraryItem[] }) {
                         {item.versionType === "PREVIEW" && <PreviewLabel />}
                       </span>
                       <span className="block max-w-[280px] truncate text-xs text-muted-foreground">{item.originalFilename}</span>
-                      <BadgeChips badges={item.badges} max={4} className="mt-1" />
                     </span>
                   </Link>
+                  <ListRowBadges creativeId={item.creativeId} badges={item.badges}>
+                    <BadgeChips badges={item.badges} max={4} className="mt-1 pl-[76px]" />
+                  </ListRowBadges>
                 </td>
                 <td className="px-3 py-2.5">
                   <AppBadge name={item.application.name} color={item.application.brandColor} />
@@ -95,6 +103,13 @@ export function CreativeList({ items }: { items: LibraryItem[] }) {
                   <span className="block">{item.uploadedBy?.name ?? "Unknown"}</span>
                   <span className="block">{formatDate(item.createdAt)}</span>
                 </td>
+                {actions && (
+                  <td className="px-4 py-2.5">
+                    <div className="flex flex-wrap gap-1.5">
+                      <WorkflowActions creativeId={item.creativeId} actions={actions[item.creativeId] ?? []} size="sm" include={QUEUE_INCLUDE} />
+                    </div>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

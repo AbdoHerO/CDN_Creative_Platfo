@@ -26,12 +26,17 @@ export function VideoPlayer({
   poster,
   title,
   onError,
+  startAt,
+  autoPlay,
 }: {
   src: string;
   type: string;
   poster?: string | null;
   title: string;
   onError: () => void;
+  /** Resume position in seconds (e.g. after switching quality). */
+  startAt?: number;
+  autoPlay?: boolean;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
@@ -180,7 +185,12 @@ export function VideoPlayer({
         onWaiting={() => setWaiting(true)}
         onPlaying={() => setWaiting(false)}
         onCanPlay={() => setWaiting(false)}
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+        onLoadedMetadata={(e) => {
+          const el = e.currentTarget;
+          setDuration(el.duration);
+          if (startAt) el.currentTime = Math.min(startAt, el.duration || startAt);
+          if (autoPlay) void el.play().catch(() => undefined);
+        }}
         onDurationChange={(e) => setDuration(e.currentTarget.duration)}
         onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
         onProgress={(e) => {
@@ -193,7 +203,7 @@ export function VideoPlayer({
         }}
         onRateChange={(e) => setSpeed(e.currentTarget.playbackRate)}
         onError={onError}
-        className={cn("mx-auto block w-full object-contain", fullscreen ? "h-screen" : "max-h-[min(72vh,760px)] min-h-[260px]")}
+        className={cn("mx-auto block w-full object-contain", fullscreen ? "h-dvh" : "max-h-[min(72vh,760px)] min-h-[260px]")}
       >
         <source src={src} type={type} />
       </video>

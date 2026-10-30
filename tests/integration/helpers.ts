@@ -92,6 +92,19 @@ export async function mp4Bytes(seconds = 1, size = "160x90"): Promise<Buffer> {
   return stdout as unknown as Buffer;
 }
 
+/**
+ * A real video encoded at a high bitrate with its index first (like camera and
+ * editing-tool exports), in any container ffmpeg writes (mp4, mkv…).
+ */
+export async function heavyVideoBytes(format: "mp4" | "matroska", seconds = 2, size = "640x360", bitrate = "8M"): Promise<Buffer> {
+  const args = ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `testsrc2=size=${size}:rate=25`, "-t", String(seconds)];
+  args.push("-c:v", "libx264", "-preset", "ultrafast", "-b:v", bitrate, "-minrate", bitrate, "-maxrate", bitrate, "-bufsize", bitrate, "-pix_fmt", "yuv420p");
+  if (format === "mp4") args.push("-movflags", "frag_keyframe+empty_moov");
+  args.push("-f", format, "pipe:1");
+  const { stdout } = await run(process.env.FFMPEG_PATH ?? "ffmpeg", args, { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 });
+  return stdout as unknown as Buffer;
+}
+
 /** Deterministic pseudo-random payload (incompressible). */
 export function randomBytesOf(size: number, seed = 1) {
   const out = Buffer.alloc(size);

@@ -23,6 +23,11 @@ export function displayKey(fileId: string) {
   return `derived/${fileId}/display.webp`;
 }
 
+/** Lighter H.264 copy of a video, played in the app (stored in the file's display slot). */
+export function streamKey(fileId: string) {
+  return `derived/${fileId}/stream.mp4`;
+}
+
 export function importArchiveKey(batchId: string, filename: string) {
   return `imports/${batchId}/${safeObjectName(filename)}`;
 }

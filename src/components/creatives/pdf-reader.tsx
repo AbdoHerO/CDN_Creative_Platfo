@@ -242,7 +242,7 @@ export function PdfReader({ src, title, downloadHref, openHref }: { src: string;
       onKeyDown={onKey}
       className={cn(
         "relative flex flex-col overflow-hidden bg-neutral-900 text-white shadow-lg ring-1 ring-black/10 outline-none focus-visible:ring-2 focus-visible:ring-primary",
-        fullscreen ? "h-screen" : "h-[min(82vh,940px)] rounded-2xl",
+        fullscreen ? "h-dvh" : "h-[min(82vh,940px)] rounded-2xl",
       )}
       data-testid="pdf-reader"
       aria-label={`PDF reader: ${title}`}

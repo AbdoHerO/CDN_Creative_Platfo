@@ -14,13 +14,15 @@ import { displayKey, thumbnailKey } from "@/lib/storage/keys";
 import { getObjectStream, putObject } from "@/lib/storage/s3";
 import { extractMedia } from "../media";
 import { log } from "../log";
+import { queueStreamCopy } from "./stream-copy";
 
 /**
  * Post-upload processing for one CreativeFile:
  *  1. stream the original from storage to a temp file while computing SHA-256,
  *  2. compare with the checksum computed in the browser (integrity),
  *  3. extract metadata (resolution, duration, codecs, pages…),
- *  4. upload a thumbnail / display rendition as *separate* objects.
+ *  4. upload a thumbnail / display rendition as *separate* objects,
+ *  5. queue a streaming copy for heavy videos (MAKE_STREAM).
  * The original object is never rewritten.
  */
 export async function processFile(payload: { fileId: string }) {
@@ -68,7 +70,7 @@ export async function processFile(payload: { fileId: string }) {
       await putObject(dispKey, media.display, "image/webp", "private, max-age=31536000, immutable");
     }
 
-    await prisma.creativeFile.update({
+    const updated = await prisma.creativeFile.update({
       where: { id: file.id },
       data: {
         width: media.width ?? null,
@@ -83,14 +85,16 @@ export async function processFile(payload: { fileId: string }) {
         integrityStatus: integrity,
         thumbnailKey: thumbKey,
         thumbnailBytes: thumbBytes,
-        displayKey: dispKey,
-        displayBytes: dispBytes,
-        metadata: media.metadata as Prisma.InputJsonValue,
+        // A video's display slot holds its streaming copy, made by its own job: keep it.
+        ...(file.mediaType === "VIDEO" ? {} : { displayKey: dispKey, displayBytes: dispBytes }),
+        metadata: { ...media.metadata, ...streamMarker(file.metadata) } as Prisma.InputJsonValue,
         processingStatus: "READY",
         processingError: media.warnings.length ? media.warnings.join(" · ").slice(0, 1000) : null,
         processedAt: new Date(),
       },
     });
+
+    await queueStreamCopy(updated);
 
     if (integrity === "MISMATCH") {
       log.warn("process-file: checksum mismatch", { fileId: file.id });
@@ -118,6 +122,12 @@ export async function processFile(payload: { fileId: string }) {
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+/** Keep the streaming-copy outcome when a file is processed again. */
+function streamMarker(metadata: unknown) {
+  const streamCopy = (metadata as { streamCopy?: unknown } | null)?.streamCopy;
+  return streamCopy ? { streamCopy } : {};
 }
 
 /** Called when all retries are exhausted. */

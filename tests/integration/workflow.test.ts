@@ -5,7 +5,7 @@ import { newId } from "@/lib/ids";
 import { creativeVisibilityWhere } from "@/lib/visibility";
 import { WorkflowError } from "@/lib/workflow";
 import { attachFile, createCreativeRecord } from "@/server/services/creatives";
-import { transitionCreative } from "@/server/services/validation";
+import { submitCreatives, transitionCreative } from "@/server/services/validation";
 import { resetDatabase, seedWorld, type World } from "./helpers";
 
 let world: World;
@@ -48,6 +48,20 @@ async function creativeWithFile(ownerId: string, opts: { versionType?: "FULL" | 
 }
 
 describe("validation workflow", () => {
+  it("submits several creatives at once (library edit mode) and skips those that cannot be submitted", async () => {
+    const { creator, creator2 } = world.users;
+    const draft = await creativeWithFile(creator.id, { name: "Draft A" });
+    const pending = await creativeWithFile(creator.id, { name: "Already pending" });
+    await transitionCreative(creator, pending.id, "submit", {});
+    const previewOnly = await creativeWithFile(creator.id, { name: "Preview only", versionType: "PREVIEW" });
+    const someoneElse = await creativeWithFile(creator2.id, { name: "Not mine" });
+
+    const res = await submitCreatives(creator, [draft.id, pending.id, previewOnly.id, someoneElse.id, draft.id, "missing-id"]);
+    expect(res).toEqual({ submitted: 1, skipped: 4 });
+    const statuses = await prisma.creative.findMany({ where: { id: { in: [draft.id, previewOnly.id, someoneElse.id] } }, select: { name: true, status: true } });
+    expect(Object.fromEntries(statuses.map((c) => [c.name, c.status]))).toEqual({ "Draft A": "PENDING", "Preview only": "DRAFT", "Not mine": "DRAFT" });
+  });
+
   it("creator submits, reviewers are notified, manager approves with a full history", async () => {
     const { creator, manager, admin } = world.users;
     const c = await creativeWithFile(creator.id);

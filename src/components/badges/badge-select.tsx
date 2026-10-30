@@ -27,6 +27,8 @@ export function BadgeSelect({
   canCreate,
   disabled,
   compact,
+  removable,
+  closeOnSelect,
   placeholder = "Add badge",
   className,
 }: {
@@ -39,6 +41,10 @@ export function BadgeSelect({
   disabled?: boolean;
   /** Only the trigger button, without the selected chips. */
   compact?: boolean;
+  /** Show a remove (×) button on each selected chip. */
+  removable?: boolean;
+  /** Close the list after a pick (one-shot actions such as the bulk "Add badge"). */
+  closeOnSelect?: boolean;
   placeholder?: string;
   className?: string;
 }) {
@@ -50,7 +56,10 @@ export function BadgeSelect({
   const name = query.trim();
   const exists = catalog.some((b) => b.name.toLowerCase() === name.toLowerCase());
 
-  const toggle = (id: string) => onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id]);
+  const toggle = (id: string) => {
+    onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id]);
+    if (closeOnSelect) setOpen(false);
+  };
 
   const create = () =>
     startCreate(async () => {
@@ -58,6 +67,7 @@ export function BadgeSelect({
       if (!res.ok) return void toast.error(res.error);
       onCreated?.(res.data);
       onChange([...value, res.data.id]);
+      if (closeOnSelect) setOpen(false);
       setQuery("");
       setColor(BADGE_COLORS[(catalog.length + 1) % BADGE_COLORS.length]);
       toast.success(`Badge “${res.data.name}” created.`);
@@ -66,7 +76,14 @@ export function BadgeSelect({
   return (
     // A span, not a div: the select is also used inside paragraph text (page header).
     <span className={cn("flex flex-wrap items-center gap-1", className)}>
-      {!compact && selected.map((b) => <BadgeChip key={b.id} badge={b} />)}
+      {!compact &&
+        selected.map((b) =>
+          removable ? (
+            <BadgeChip key={b.id} badge={b} onRemove={() => onChange(value.filter((v) => v !== b.id))} disabled={disabled} />
+          ) : (
+            <BadgeChip key={b.id} badge={b} />
+          ),
+        )}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
@@ -120,6 +137,26 @@ export function BadgeSelect({
                           aria-label={`Colour ${c}`}
                         />
                       ))}
+                      {/* Any other colour, with the system colour picker. */}
+                      <label
+                        className={cn(
+                          "relative size-5 cursor-pointer rounded-full ring-2 ring-offset-2 ring-offset-popover transition-transform hover:scale-110",
+                          BADGE_COLORS.includes(color) ? "ring-transparent" : "",
+                        )}
+                        style={{
+                          background: "conic-gradient(#EF4444, #F59E0B, #EAB308, #10B981, #0EA5E9, #6366F1, #EC4899, #EF4444)",
+                          ["--tw-ring-color" as string]: BADGE_COLORS.includes(color) ? "transparent" : color,
+                        }}
+                        title="Custom colour"
+                      >
+                        <input
+                          type="color"
+                          value={color}
+                          onChange={(e) => setColor(e.target.value.toUpperCase())}
+                          className="absolute inset-0 size-full cursor-pointer opacity-0"
+                          aria-label="Custom colour"
+                        />
+                      </label>
                     </div>
                   </div>
                   <CommandGroup>

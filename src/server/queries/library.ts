@@ -219,11 +219,13 @@ export type LibraryItem = {
   campaign: { id: string; name: string } | null;
   uploadedBy: { id: string; name: string } | null;
   versions: { full: number; preview: number; variant: number };
-  badges: { name: string; slug: string; color: string }[];
+  badges: { id: string; name: string; slug: string; color: string }[];
   /** The creative has a lite (preview) version. */
   hasPreview: boolean;
-  /** Short muted clip played on hover: the lite version when there is one, else this file. */
+  /** Video played on hover and in the phone feed: the lite version, else the streaming copy, else this file. */
   hoverVideoUrl: string | null;
+  /** hoverVideoUrl is a light file (lite version or streaming copy), cheap to buffer ahead. */
+  lightVideo: boolean;
   /** Full-size picture for the mobile feed (images: browser-viewable original or display rendition). */
   imageUrl: string | null;
 };
@@ -281,7 +283,7 @@ export async function queryLibrary(
             campaign: { select: { id: true, name: true } },
             createdBy: { select: { id: true, name: true } },
             files: { select: { versionType: true, isCurrent: true, mediaType: true, storageKey: true, mimeType: true, originalFilename: true } },
-            badges: { select: { badge: { select: { name: true, slug: true, color: true, sortOrder: true } } } },
+            badges: { select: { badge: { select: { id: true, name: true, slug: true, color: true, sortOrder: true } } } },
           },
         },
       },
@@ -325,7 +327,7 @@ export async function queryLibrary(
       badges: r.creative.badges
         .map((b) => b.badge)
         .sort((x, y) => x.sortOrder - y.sortOrder || x.name.localeCompare(y.name))
-        .map(({ name, slug, color }) => ({ name, slug, color })),
+        .map(({ id, name, slug, color }) => ({ id, name, slug, color })),
     })),
   );
 
@@ -333,24 +335,35 @@ export async function queryLibrary(
 }
 
 type HoverSource = { storageKey: string; mimeType: string; originalFilename: string; mediaType: MediaType };
+type Playable = { key: string; mime: string; light: boolean };
 
-/** Browser-playable video for the hover preview: the current lite version first, else the row's own file. */
+/** A file browsers can play directly. */
+function playable(f: HoverSource | undefined, light: boolean): Playable | null {
+  if (f?.mediaType !== "VIDEO" || !fileTypeForName(f.originalFilename)?.browserPreviewable) return null;
+  return { key: f.storageKey, mime: f.mimeType === "video/quicktime" ? "video/mp4" : f.mimeType, light };
+}
+
+/**
+ * Video for the hover preview and the phone feed, lightest first: the current
+ * lite version, then the worker's streaming copy (720p), then the file itself.
+ */
 async function hoverVideo(r: {
   versionType: VersionType;
   mediaType: MediaType;
   storageKey: string;
+  displayKey: string | null;
   mimeType: string;
   originalFilename: string;
   creative: { files: (HoverSource & { versionType: VersionType; isCurrent: boolean })[] };
 }) {
   const lite = r.creative.files.find((f) => f.versionType === "PREVIEW" && f.isCurrent);
-  const candidates: (HoverSource | undefined)[] = r.versionType === "PREVIEW" ? [r] : [lite, r];
-  const source = candidates.find((f) => f?.mediaType === "VIDEO" && fileTypeForName(f.originalFilename)?.browserPreviewable);
+  const stream: Playable | null = r.mediaType === "VIDEO" && r.displayKey ? { key: r.displayKey, mime: "video/mp4", light: true } : null;
+  const source =
+    (r.versionType === "PREVIEW" ? null : playable(lite, true)) ?? stream ?? playable(r, r.versionType === "PREVIEW");
   return {
     hasPreview: !!lite,
-    hoverVideoUrl: source
-      ? await trySignedGetUrl(source.storageKey, { stable: true, contentType: source.mimeType === "video/quicktime" ? "video/mp4" : source.mimeType })
-      : null,
+    lightVideo: source?.light ?? false,
+    hoverVideoUrl: source ? await trySignedGetUrl(source.key, { stable: true, contentType: source.mime }) : null,
   };
 }
 

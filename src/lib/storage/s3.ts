@@ -222,8 +222,10 @@ export type SignedUrlOptions = {
   contentType?: string;
   expiresIn?: number;
   /**
-   * Round the signing time to the hour so identical URLs are produced for an hour,
-   * letting browsers cache thumbnails between page loads.
+   * Cacheable URL for in-app media (thumbnails, videos, images): signed at the
+   * start of a time window of half the TTL and valid for the whole TTL, so every
+   * page load in that window gets the same URL, and the response carries a
+   * matching Cache-Control. Browsers then reuse what they already downloaded.
    */
   stable?: boolean;
 };
@@ -232,9 +234,9 @@ export async function signedGetUrl(key: string, opts: SignedUrlOptions = {}): Pr
   const { s3, config } = storage();
   const env = getEnv();
   const disposition = opts.filename ? contentDisposition(opts.disposition ?? "inline", opts.filename) : undefined;
-  const hour = 3600 * 1000;
-  const signingDate = opts.stable ? new Date(Math.floor(Date.now() / hour) * hour) : undefined;
-  const expiresIn = opts.stable ? Math.max(opts.expiresIn ?? 0, 2 * 3600) : (opts.expiresIn ?? env.SIGNED_URL_TTL_SECONDS);
+  const ttl = opts.stable ? Math.max(env.SIGNED_URL_TTL_SECONDS, 2 * 3600) : (opts.expiresIn ?? env.SIGNED_URL_TTL_SECONDS);
+  const windowSeconds = Math.floor(ttl / 2);
+  const signingDate = opts.stable ? new Date(Math.floor(Date.now() / (windowSeconds * 1000)) * windowSeconds * 1000) : undefined;
   return getSignedUrl(
     s3,
     new GetObjectCommand({
@@ -242,8 +244,11 @@ export async function signedGetUrl(key: string, opts: SignedUrlOptions = {}): Pr
       Key: key,
       ResponseContentDisposition: disposition,
       ResponseContentType: opts.contentType,
+      // Originals are uploaded by browsers without caching metadata. A stable URL stays
+      // valid at least windowSeconds after it is first used, so caching that long is safe.
+      ResponseCacheControl: opts.stable ? `private, max-age=${windowSeconds}` : undefined,
     }),
-    { expiresIn, signingDate },
+    { expiresIn: ttl, signingDate },
   );
 }
 

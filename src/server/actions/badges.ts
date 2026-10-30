@@ -8,7 +8,7 @@ import { prisma } from "@/lib/db";
 import { AppError, NotFoundError } from "@/lib/errors";
 import { parseInput, runAction } from "@/server/action-utils";
 import { badgeSlug } from "@/lib/badges";
-import { BADGE_SELECT, setCreativeBadges } from "@/server/services/badges";
+import { BADGE_SELECT, bulkSetBadge, setCreativeBadges } from "@/server/services/badges";
 
 const id = z.string().min(1).max(64);
 
@@ -103,4 +103,20 @@ export async function deleteBadgeAction(badgeId: string) {
     revalidateBadges();
     return true;
   }, "Badge deleted.");
+}
+
+/** Library edit mode: add or remove one badge on every selected creative. */
+export async function bulkBadgeAction(creativeIds: string[], badgeId: string, mode: "add" | "remove") {
+  const result = await runAction(async () => {
+    const user = await requireActionUser("badge.manage");
+    const ids = parseInput(z.array(id).min(1).max(500), creativeIds);
+    const res = await bulkSetBadge(user, ids, parseInput(id, badgeId), parseInput(z.enum(["add", "remove"]), mode), await getRequestMeta());
+    revalidateBadges();
+    return res;
+  });
+  if (result.ok) {
+    const { updated, skipped, badge } = result.data;
+    result.message = `“${badge}” ${mode === "add" ? "added to" : "removed from"} ${updated} creative${updated === 1 ? "" : "s"}${skipped ? ` (${skipped} skipped: no permission)` : ""}.`;
+  }
+  return result;
 }

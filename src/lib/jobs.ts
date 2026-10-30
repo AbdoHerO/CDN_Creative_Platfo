@@ -8,6 +8,7 @@ export type JobPayloads = {
   ANALYZE_IMPORT: { batchId: string };
   RUN_IMPORT: { batchId: string };
   RECONCILE_STORAGE: { snapshotId: string };
+  MAKE_STREAM: { fileId: string };
 };
 
 export async function enqueueJob<T extends JobType>(

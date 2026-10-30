@@ -62,7 +62,7 @@ export default async function CampaignsPage({ searchParams }: PageProps<"/campai
         actions={can(user.role, "campaign.manage") && <CampaignFormDialog applications={applications} tagSuggestions={tags.map((t) => t.name)} defaultApplicationId={app} />}
       />
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <form action="/campaigns" className="flex-1 sm:max-w-xs">
+        <form action="/campaigns" className="flex-1 max-sm:basis-full sm:max-w-xs">
           {app && <input type="hidden" name="app" value={app} />}
           {status && <input type="hidden" name="status" value={status} />}
           <input
@@ -72,7 +72,8 @@ export default async function CampaignsPage({ searchParams }: PageProps<"/campai
             className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
           />
         </form>
-        <div className="flex flex-wrap gap-1.5">
+        {/* On phones each chip group is one swipeable row. */}
+        <div className="flex flex-wrap gap-1.5 max-sm:-mx-3 max-sm:w-[calc(100%+1.5rem)] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:px-3 max-sm:[scrollbar-width:none] max-sm:[&>a]:shrink-0 max-sm:[&>a]:whitespace-nowrap">
           <Link href={href({ app: undefined })} className={cn("rounded-full border px-3 py-1 text-xs", !app ? "bg-secondary font-medium" : "bg-card hover:bg-muted")}>
             All applications
           </Link>
@@ -87,7 +88,7 @@ export default async function CampaignsPage({ searchParams }: PageProps<"/campai
             </Link>
           ))}
         </div>
-        <div className="flex flex-wrap gap-1.5 sm:ml-auto">
+        <div className="flex flex-wrap gap-1.5 sm:ml-auto max-sm:-mx-3 max-sm:w-[calc(100%+1.5rem)] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:px-3 max-sm:[scrollbar-width:none] max-sm:[&>a]:shrink-0 max-sm:[&>a]:whitespace-nowrap">
           {(["ACTIVE", "PLANNED", "PAUSED", "COMPLETED", "ARCHIVED"] as CampaignStatus[]).map((s) => (
             <Link
               key={s}
@@ -103,10 +104,11 @@ export default async function CampaignsPage({ searchParams }: PageProps<"/campai
       {campaigns.length === 0 ? (
         <EmptyState icon={FolderKanban} title="No campaigns found" description={q || app || status ? "Try different filters." : "Create a campaign to group creatives."} />
       ) : (
+        // A table from sm up; on phones each campaign becomes a tappable card (same markup).
         <div className="overflow-hidden rounded-xl border bg-card shadow-xs">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead>
+            <table className="w-full text-sm max-sm:block sm:min-w-[760px]">
+              <thead className="max-sm:hidden">
                 <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
                   <th className="px-4 py-2.5 font-medium">Campaign</th>
                   <th className="px-3 py-2.5 font-medium">Application</th>
@@ -116,33 +118,41 @@ export default async function CampaignsPage({ searchParams }: PageProps<"/campai
                   <th className="px-4 py-2.5 font-medium">Tags</th>
                 </tr>
               </thead>
-              <tbody className="divide-y">
+              <tbody className="divide-y max-sm:block">
                 {campaigns.map((c) => (
-                  <tr key={c.id} className="transition-colors hover:bg-muted/40">
-                    <td className="px-4 py-3">
-                      <Link href={`/campaigns/${c.id}`} className="font-medium hover:text-primary">
+                  <tr
+                    key={c.id}
+                    className="transition-colors hover:bg-muted/40 max-sm:relative max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-2 max-sm:gap-y-1.5 max-sm:px-4 max-sm:py-3 max-sm:active:bg-muted/60"
+                  >
+                    <td className="px-4 py-3 max-sm:basis-full max-sm:p-0">
+                      <Link href={`/campaigns/${c.id}`} className="font-medium hover:text-primary max-sm:after:absolute max-sm:after:inset-0">
                         {c.name}
                       </Link>
                       {c.description && <p className="line-clamp-1 max-w-sm text-xs text-muted-foreground">{c.description}</p>}
                     </td>
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-3 max-sm:p-0">
                       <AppBadge name={c.application.name} color={c.application.brandColor} />
                     </td>
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-3 max-sm:p-0">
                       <CampaignStatusBadge status={c.status} />
                     </td>
-                    <td className="px-3 py-3 text-xs text-muted-foreground">
+                    <td className="px-3 py-3 text-xs text-muted-foreground max-sm:order-1 max-sm:basis-full max-sm:p-0">
                       {c.startDate ? formatDate(c.startDate) : "—"} → {c.endDate ? formatDate(c.endDate) : "—"}
                     </td>
-                    <td className="tabular px-3 py-3">{formatNumber(c._count.creatives)}</td>
-                    <td className="px-4 py-3">
-                      <span className="flex flex-wrap gap-1">
-                        {c.tags.map((t) => (
-                          <span key={t.tag.name} className="rounded bg-secondary px-1.5 py-0.5 text-[11px]">
-                            {t.tag.name}
-                          </span>
-                        ))}
-                      </span>
+                    <td className="tabular px-3 py-3 max-sm:ml-auto max-sm:p-0 max-sm:text-xs max-sm:text-muted-foreground">
+                      {formatNumber(c._count.creatives)}
+                      <span className="sm:hidden"> creatives</span>
+                    </td>
+                    <td className="px-4 py-3 max-sm:order-2 max-sm:basis-full max-sm:p-0 max-sm:empty:hidden">
+                      {c.tags.length > 0 && (
+                        <span className="flex flex-wrap gap-1">
+                          {c.tags.map((t) => (
+                            <span key={t.tag.name} className="rounded bg-secondary px-1.5 py-0.5 text-[11px]">
+                              {t.tag.name}
+                            </span>
+                          ))}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}

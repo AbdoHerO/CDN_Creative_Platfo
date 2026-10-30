@@ -19,6 +19,9 @@ sharp.cache(false);
 
 const THUMB_MAX = 640;
 const DISPLAY_MAX = 2560;
+/** Streaming copy: short side in pixels and bitrate ceiling. */
+const STREAM_SHORT_SIDE = 720;
+const STREAM_MAX_RATE = "2500k";
 const SHARP_INPUT = { limitInputPixels: 1_000_000_000, failOn: "none" as const };
 
 export type MediaResult = {
@@ -218,6 +221,34 @@ async function extractDocument(path: string, extension: string, tmp: string): Pr
     warnings.push(`Page preview unavailable: ${err instanceof Error ? err.message.split("\n")[0] : err}`);
   }
   return { pageCount, width, height, thumbnail, display, metadata: { pageUnit: "pt" }, warnings };
+}
+
+/**
+ * Lighter copy of a video for playback in the app: H.264 at most 720p (short
+ * side), about 2.5 Mbit/s at most, AAC stereo, and the index at the start so it
+ * plays before it is fully downloaded. Written to a new file; the original is
+ * only read. Two threads, so a transcode never takes the whole server.
+ */
+export async function makeStreamCopy(input: string, output: string, durationSeconds: number | null) {
+  const side = (dim: "iw" | "ih") => `trunc(min(${STREAM_SHORT_SIDE},${dim})/2)*2`;
+  const scale = `scale=w='if(gt(iw,ih),-2,${side("iw")})':h='if(gt(iw,ih),${side("ih")},-2)'`;
+  // Allow about 4 s of processing per second of video, between 10 and 60 minutes.
+  const timeout = Math.min(60 * 60_000, Math.max(10 * 60_000, (durationSeconds ?? 0) * 4000));
+  await tool(
+    getEnv().FFMPEG_PATH,
+    [
+      "-hide_banner", "-loglevel", "error", "-y", "-i", input,
+      "-map", "0:v:0", "-map", "0:a:0?",
+      "-vf", scale,
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-maxrate", STREAM_MAX_RATE, "-bufsize", "5000k",
+      "-profile:v", "high", "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-b:a", "128k", "-ac", "2",
+      "-movflags", "+faststart",
+      "-threads", "2",
+      output,
+    ],
+    timeout,
+  );
 }
 
 export async function extractMedia(path: string, mediaType: MediaType, extension: string, tmp: string): Promise<MediaResult> {

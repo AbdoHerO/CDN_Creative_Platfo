@@ -1,13 +1,16 @@
 "use client";
 
-import { BookOpen, FileAudio, FileText, ImageIcon, Loader2, Play, Sparkles, VolumeX } from "lucide-react";
+import { BookOpen, Check, FileAudio, FileText, ImageIcon, Loader2, Play, Sparkles, VolumeX } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BadgeChips } from "@/components/badges/badge-chip";
 import { StatusBadge } from "@/components/creatives/status-badge";
+import { WorkflowActions } from "@/components/creatives/workflow-actions";
 import { formatBytes, formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import type { WorkflowAction } from "@/lib/workflow";
 import type { LibraryItem } from "@/server/queries/library";
+import { CardBadgeEditor, useLibraryEdit } from "./edit-mode";
 import { ReelFeed } from "./reel-feed";
 
 /** Seconds of the clip played (and looped) while hovering a card. */
@@ -30,15 +33,39 @@ const GRID: Record<ReelShape, string> = {
  * version when there is one). Tall 9:16 cards for videos, 4:3 for banners and
  * PDFs. On phones a tap opens a full-screen, swipeable feed.
  */
-export function ReelGrid({ items, shape = "portrait" }: { items: LibraryItem[]; shape?: ReelShape }) {
+export function ReelGrid({
+  items,
+  shape = "portrait",
+  actions,
+}: {
+  items: LibraryItem[];
+  shape?: ReelShape;
+  /** Workflow buttons shown under each card (validation queue). */
+  actions?: Record<string, WorkflowAction[]>;
+}) {
   const [feedIndex, setFeedIndex] = useState<number | null>(null);
   const closeFeed = useCallback(() => setFeedIndex(null), []);
+  const { editing } = useLibraryEdit();
   return (
     <>
       <ul className={cn("grid", GRID[shape])} data-testid="reel-grid">
         {items.map((item, i) => (
-          <li key={item.fileId}>
+          <li key={item.fileId} className="min-w-0">
             <ReelCard item={item} shape={shape} onOpenFeed={() => setFeedIndex(i)} />
+            {editing ? (
+              <CardBadgeEditor key={item.badges.map((b) => b.id).join()} creativeId={item.creativeId} badges={item.badges} />
+            ) : (
+              !!actions?.[item.creativeId]?.length && (
+                <div className="mt-2 flex flex-wrap gap-1.5 [&>button]:h-8 [&>button]:flex-1 [&>button]:px-2 [&>button]:text-xs">
+                  <WorkflowActions
+                    creativeId={item.creativeId}
+                    actions={actions[item.creativeId]}
+                    size="sm"
+                    include={["submit", "startReview", "approve", "requestChanges", "decline", "withdraw"]}
+                  />
+                </div>
+              )
+            )}
           </li>
         ))}
       </ul>
@@ -48,6 +75,8 @@ export function ReelGrid({ items, shape = "portrait" }: { items: LibraryItem[]; 
 }
 
 function ReelCard({ item, shape, onOpenFeed }: { item: LibraryItem; shape: ReelShape; onOpenFeed: () => void }) {
+  const { editing, selected, toggle } = useLibraryEdit();
+  const isSelected = editing && selected.has(item.creativeId);
   const videoRef = useRef<HTMLVideoElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [active, setActive] = useState(false);
@@ -96,6 +125,11 @@ function ReelCard({ item, shape, onOpenFeed }: { item: LibraryItem; shape: ReelS
   };
 
   const onClick = (e: React.MouseEvent) => {
+    if (editing) {
+      e.preventDefault();
+      toggle(item.creativeId);
+      return;
+    }
     if (e.metaKey || e.ctrlKey || e.shiftKey || !window.matchMedia(FEED_QUERY).matches) return;
     e.preventDefault();
     onOpenFeed();
@@ -116,7 +150,9 @@ function ReelCard({ item, shape, onOpenFeed }: { item: LibraryItem; shape: ReelS
       className={cn(
         "group relative block overflow-hidden rounded-xl bg-neutral-950 shadow-sm ring-1 ring-black/5 outline-none transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/20 focus-visible:ring-2 focus-visible:ring-primary active:scale-[0.98] sm:rounded-2xl dark:ring-white/10",
         shape === "portrait" ? "aspect-[9/16]" : "aspect-[4/3]",
+        isSelected && "ring-4 ring-primary",
       )}
+      aria-pressed={editing ? isSelected : undefined}
       aria-label={`${item.name}, ${item.application.name}`}
       data-testid="reel-card"
     >
@@ -153,6 +189,18 @@ function ReelCard({ item, shape, onOpenFeed }: { item: LibraryItem; shape: ReelS
           onTimeUpdate={onTime}
           className={cn("absolute inset-0 size-full object-contain transition-opacity duration-300", playing ? "opacity-100" : "opacity-0")}
         />
+      )}
+
+      {editing && (
+        <span
+          className={cn(
+            "absolute left-1/2 top-1/2 z-10 flex size-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full ring-2 ring-white transition-all",
+            isSelected ? "bg-primary text-white" : "bg-black/35 text-transparent backdrop-blur-sm",
+          )}
+          aria-hidden
+        >
+          <Check className="size-5" strokeWidth={3} />
+        </span>
       )}
 
       {/* Top: platform and status */}

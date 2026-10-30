@@ -171,7 +171,9 @@ function Slide({
           playsInline
           loop
           muted={muted}
-          preload={near ? "auto" : "none"}
+          // Neighbours buffer ahead only when they play a light file (lite version or
+          // streaming copy): a full original (10–25 Mbps) would take the bandwidth of the video on screen.
+          preload={active || (near && item.lightVideo) ? "auto" : near ? "metadata" : "none"}
           onClick={togglePlay}
           onPlay={() => setPaused(false)}
           onPause={() => setPaused(true)}

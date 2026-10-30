@@ -70,11 +70,11 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
         <StatCard label="Approved" value={t.APPROVED} icon={CheckCircle2} tone="emerald" href="/approved" />
         {user.role !== "VIEWER" && (
           <>
-            <StatCard label="Pending validation" value={t.PENDING} icon={Clock} tone="amber" href="/validation" />
+            <StatCard label="Pending validation" value={t.PENDING} icon={Clock} tone="amber" href="/validation?tab=PENDING" />
             <StatCard label="In review" value={t.IN_REVIEW} icon={Eye} tone="sky" href="/validation?tab=IN_REVIEW" />
             <StatCard label="Declined" value={t.DECLINED} icon={XCircle} tone="rose" href="/declined" />
             <StatCard label="Archived" value={t.ARCHIVED} icon={Archive} tone="zinc" href="/archived" />
-            <StatCard label="Drafts" value={t.DRAFT} icon={Layers} tone="zinc" href="/library?status=DRAFT" />
+            <StatCard label="Drafts" value={t.DRAFT} icon={Layers} tone="zinc" href="/validation?tab=DRAFT" />
           </>
         )}
       </section>

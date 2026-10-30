@@ -8,7 +8,7 @@ import { STATUS_LABELS } from "@/lib/constants";
 import { WORKFLOW, type WorkflowAction } from "@/lib/workflow";
 import { parseInput, runAction } from "@/server/action-utils";
 import { deleteCreative, deleteFile, moveFile, setCurrentFile, updateCreativeMetadata } from "@/server/services/creatives";
-import { transitionCreative } from "@/server/services/validation";
+import { submitCreatives, transitionCreative } from "@/server/services/validation";
 
 const id = z.string().min(1).max(64);
 
@@ -51,6 +51,22 @@ export async function transitionCreativeAction(creativeId: string, input: z.inpu
     return res;
   });
   if (result.ok) result.message = `Status changed to ${STATUS_LABELS[result.data.status]}.`;
+  return result;
+}
+
+/** Library edit mode: submit every selected draft (or declined creative) for validation. */
+export async function bulkSubmitAction(creativeIds: string[]) {
+  const result = await runAction(async () => {
+    const user = await requireActionUser();
+    const ids = parseInput(z.array(id).min(1).max(500), creativeIds);
+    const res = await submitCreatives(user, ids, await getRequestMeta());
+    revalidateCreative();
+    return res;
+  });
+  if (result.ok) {
+    const { submitted, skipped } = result.data;
+    result.message = `${submitted} creative${submitted === 1 ? "" : "s"} submitted for validation${skipped ? ` (${skipped} skipped)` : ""}.`;
+  }
   return result;
 }
 

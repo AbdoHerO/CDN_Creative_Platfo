@@ -18,6 +18,7 @@ import { ACCEPTED_EXTENSIONS } from "@/lib/files/types";
 import { formatNumber } from "@/lib/format";
 import { updatePreferencesAction } from "@/server/actions/preferences";
 import type { LibraryFacets } from "@/server/queries/library";
+import { EditModeToggle } from "./edit-mode";
 
 type Values = {
   q: string;
@@ -370,7 +371,8 @@ export function LibraryFilters({
             </Button>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <EditModeToggle />
           <div className="hidden md:block">{previewSwitch}</div>
           <div className="hidden md:block">{sortSelect("w-[170px]")}</div>
           <ToggleGroup type="single" variant="outline" size="sm" value={view} onValueChange={setView} aria-label="View">

@@ -3,17 +3,32 @@
 import { ClipboardCheck, Library, Menu, Plus, Search } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useSidebar } from "@/components/ui/sidebar";
+import { useState } from "react";
+import type { RoleKey } from "@/generated/prisma/enums";
+import type { Permission } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { OPEN_SEARCH_EVENT } from "./global-search";
+import { MobileMenu } from "./mobile-menu";
 
 /**
  * App-style bottom bar on phones (hidden from md up): library, search, a
  * central upload button, the validation queue and the full menu.
  */
-export function MobileNav({ canUpload, showQueue, queueCount }: { canUpload: boolean; showQueue: boolean; queueCount: number }) {
+export function MobileNav({
+  canUpload,
+  showQueue,
+  queueCount,
+  user,
+  permissions,
+}: {
+  canUpload: boolean;
+  showQueue: boolean;
+  queueCount: number;
+  user: { name: string; email: string; role: RoleKey };
+  permissions: Permission[];
+}) {
   const pathname = usePathname();
-  const { setOpenMobile } = useSidebar();
+  const [menuOpen, setMenuOpen] = useState(false);
   const active = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   return (
@@ -44,11 +59,12 @@ export function MobileNav({ canUpload, showQueue, queueCount }: { canUpload: boo
             <ClipboardCheck />
           </Item>
         )}
-        <button type="button" onClick={() => setOpenMobile(true)} className={itemClass(false)} aria-label="Menu">
+        <button type="button" onClick={() => setMenuOpen(true)} className={itemClass(menuOpen)} aria-label="Menu" data-testid="mobile-menu-button">
           <Menu />
           <span>Menu</span>
         </button>
       </div>
+      <MobileMenu open={menuOpen} onOpenChange={setMenuOpen} user={user} permissions={permissions} queueCount={queueCount} />
     </nav>
   );
 }

@@ -66,8 +66,11 @@ export async function getCreativeDetail(user: SessionUser, creativeId: string) {
         createdAt: f.createdAt.toISOString(),
         uploadedBy: f.uploadedBy,
         thumbnailUrl: await trySignedGetUrl(f.thumbnailKey, { stable: true }),
-        displayUrl: await trySignedGetUrl(f.displayKey, { stable: true }),
-        mediaUrl: await trySignedGetUrl(f.storageKey, { disposition: "inline", filename: f.originalFilename, contentType: f.mimeType }),
+        // Images and documents: a display rendition. Videos: the lighter streaming copy (720p MP4).
+        displayUrl: f.mediaType === "VIDEO" ? null : await trySignedGetUrl(f.displayKey, { stable: true }),
+        streamUrl: f.mediaType === "VIDEO" ? await trySignedGetUrl(f.displayKey, { stable: true, contentType: "video/mp4" }) : null,
+        // Stable, so revisiting a creative plays from the browser cache instead of downloading again.
+        mediaUrl: await trySignedGetUrl(f.storageKey, { stable: true, disposition: "inline", filename: f.originalFilename, contentType: f.mimeType }),
       };
     }),
   );

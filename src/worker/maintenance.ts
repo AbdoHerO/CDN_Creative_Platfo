@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { isStorageConfigured } from "@/lib/env";
 import { abortMultipartUpload, deleteObjects } from "@/lib/storage/s3";
+import { backfillStreamCopies } from "./handlers/stream-copy";
 import { log } from "./log";
 
 const LOCK_ID = 727_001;
@@ -54,13 +55,15 @@ export async function runMaintenance() {
         ],
       },
     });
-    if (sessions.count || limits.count || expired.length || orphans.count || oldJobs.count) {
+    const streamCopies = await backfillStreamCopies();
+    if (sessions.count || limits.count || expired.length || orphans.count || oldJobs.count || streamCopies) {
       log.info("maintenance", {
         sessions: sessions.count,
         rateLimits: limits.count,
         expiredUploads: expired.length,
         orphanCreatives: orphans.count,
         jobsPurged: oldJobs.count,
+        streamCopiesQueued: streamCopies,
       });
     }
   } finally {

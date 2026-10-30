@@ -1,23 +1,8 @@
 "use client";
 
-import {
-  Activity,
-  AppWindow,
-  Archive,
-  CheckCircle2,
-  ClipboardCheck,
-  FolderKanban,
-  HardDrive,
-  LayoutDashboard,
-  Library,
-  Settings,
-  Upload,
-  Users,
-  XCircle,
-  type LucideIcon,
-} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect } from "react";
 import { BrandMark, BrandName } from "@/components/brand";
 import {
   Sidebar,
@@ -32,49 +17,13 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { ROLE_LABELS } from "@/lib/constants";
 import type { RoleKey } from "@/generated/prisma/enums";
 import type { Permission } from "@/lib/permissions";
 import { UserAvatar } from "@/components/common/user-avatar";
-
-type NavItem = { title: string; href: string; icon: LucideIcon; permission?: Permission; badge?: "queue" };
-
-const NAV: { label: string; items: NavItem[] }[] = [
-  {
-    label: "Workspace",
-    items: [
-      { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-      { title: "Creative Library", href: "/library", icon: Library },
-      { title: "Upload", href: "/upload", icon: Upload, permission: "creative.upload" },
-    ],
-  },
-  {
-    label: "Organize",
-    items: [
-      { title: "Applications", href: "/applications", icon: AppWindow },
-      { title: "Campaigns", href: "/campaigns", icon: FolderKanban },
-    ],
-  },
-  {
-    label: "Validation",
-    items: [
-      { title: "Pending Validation", href: "/validation", icon: ClipboardCheck, badge: "queue" },
-      { title: "Approved", href: "/approved", icon: CheckCircle2 },
-      { title: "Declined", href: "/declined", icon: XCircle },
-      { title: "Archived", href: "/archived", icon: Archive },
-    ],
-  },
-  {
-    label: "Administration",
-    items: [
-      { title: "Team & Users", href: "/team", icon: Users, permission: "user.manage" },
-      { title: "Activity History", href: "/activity", icon: Activity, permission: "activity.view" },
-      { title: "Storage", href: "/storage", icon: HardDrive, permission: "storage.view" },
-      { title: "Settings", href: "/settings", icon: Settings },
-    ],
-  },
-];
+import { visibleNav } from "./nav-config";
 
 export function AppSidebar({
   user,
@@ -87,7 +36,9 @@ export function AppSidebar({
 }) {
   const pathname = usePathname();
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
-  const viewerOnly = user.role === "VIEWER";
+  const { setOpenMobile } = useSidebar();
+  // If the drawer version is ever opened on a small screen, close it on navigation.
+  useEffect(() => setOpenMobile(false), [pathname, setOpenMobile]);
 
   return (
     <Sidebar collapsible="icon" variant="sidebar">
@@ -98,14 +49,8 @@ export function AppSidebar({
         </Link>
       </SidebarHeader>
       <SidebarContent className="pt-2">
-        {NAV.map((group) => {
-          const items = group.items.filter((item) => {
-            if (item.permission && !permissions.includes(item.permission)) return false;
-            // Viewers only ever see approved creatives; hide queues that would always be empty.
-            if (viewerOnly && ["/validation", "/declined", "/archived"].includes(item.href)) return false;
-            return true;
-          });
-          if (items.length === 0) return null;
+        {visibleNav(user.role, permissions).map(({ label, items }) => {
+          const group = { label };
           return (
             <SidebarGroup key={group.label} className="py-1">
               <SidebarGroupLabel className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">

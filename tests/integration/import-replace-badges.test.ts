@@ -5,7 +5,7 @@ import { newId } from "@/lib/ids";
 import { headObject, putObject } from "@/lib/storage/s3";
 import { importArchiveKey, originalKey } from "@/lib/storage/keys";
 import { ensureApplication } from "@/server/services/applications";
-import { setCreativeBadges } from "@/server/services/badges";
+import { bulkSetBadge, setCreativeBadges } from "@/server/services/badges";
 import { attachFile, createCreativeRecord } from "@/server/services/creatives";
 import { completeUpload, createUploadBatch } from "@/server/services/uploads";
 import { analyzeImport, runImport } from "@/worker/handlers/imports";
@@ -216,5 +216,33 @@ describe("badges", () => {
     const left = await prisma.creativeBadge.findMany({ where: { creativeId: creative.id }, include: { badge: true } });
     expect(left.map((b) => b.badge.name)).toEqual(["Higgsfield"]);
     await expect(setCreativeBadges(world.users.viewer, creative.id, [])).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("adds or removes one badge on many creatives at once (library edit mode), skipping those the user cannot edit", async () => {
+    const { creative: own } = await creativeWithFile("Spot A", await mp4Bytes(1), "spot_a.mp4");
+    const other = await prisma.$transaction((tx) =>
+      createCreativeRecord(tx, {
+        name: "Spot B",
+        applicationId: world.apps.alpha,
+        category: "MARKETING_VIDEO",
+        matchKey: "spot b",
+        mediaType: "VIDEO",
+        createdById: world.users.creator2.id,
+      }),
+    );
+    const badge = await prisma.badge.create({ data: { name: "3D", slug: "3d", color: "#F59E0B" } });
+
+    // A creator edits only their own creatives; duplicates in the selection count once.
+    expect(await bulkSetBadge(world.users.creator, [own.id, other.id, own.id], badge.id, "add")).toEqual({ updated: 1, skipped: 1, badge: "3D" });
+    // Admins edit everything, and adding a badge twice is harmless.
+    expect(await bulkSetBadge(world.users.admin, [own.id, other.id], badge.id, "add")).toMatchObject({ updated: 2, skipped: 0 });
+    expect(await prisma.creativeBadge.count({ where: { badgeId: badge.id } })).toBe(2);
+    expect(await prisma.activityLog.count({ where: { action: "CREATIVE_UPDATED", creativeId: other.id } })).toBe(1);
+
+    expect(await bulkSetBadge(world.users.manager, [own.id, other.id], badge.id, "remove")).toMatchObject({ updated: 2 });
+    expect(await prisma.creativeBadge.count({ where: { badgeId: badge.id } })).toBe(0);
+    // Viewers edit nothing.
+    expect(await bulkSetBadge(world.users.viewer, [own.id], badge.id, "add")).toMatchObject({ updated: 0, skipped: 1 });
+    await expect(bulkSetBadge(world.users.admin, [own.id], "missing-badge", "add")).rejects.toThrow(/badge not found/i);
   });
 });

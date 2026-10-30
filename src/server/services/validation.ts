@@ -13,7 +13,7 @@ import {
   type CreativeRef,
 } from "@/lib/permissions";
 import type { RequestMeta } from "@/lib/request";
-import { planTransition, VALIDATION_ACTION_LABELS, type WorkflowAction } from "@/lib/workflow";
+import { planTransition, VALIDATION_ACTION_LABELS, WorkflowError, type WorkflowAction } from "@/lib/workflow";
 import { lockCreative } from "./creatives";
 
 /**
@@ -47,6 +47,25 @@ function authorize(actor: Actor, action: WorkflowAction, creative: CreativeRef):
     default:
       return canReviewCreative(actor, creative);
   }
+}
+
+/**
+ * Library edit mode: submit several creatives for validation at once. Those that
+ * cannot be submitted (wrong status, no full version, not allowed, deleted) are
+ * skipped; any other error stops the batch.
+ */
+export async function submitCreatives(actor: Actor & { name: string }, creativeIds: string[], meta?: RequestMeta | null) {
+  const ids = [...new Set(creativeIds)];
+  let submitted = 0;
+  for (const creativeId of ids) {
+    try {
+      await transitionCreative(actor, creativeId, "submit", {}, meta);
+      submitted++;
+    } catch (err) {
+      if (!(err instanceof AppError || err instanceof WorkflowError)) throw err;
+    }
+  }
+  return { submitted, skipped: ids.length - submitted };
 }
 
 export async function transitionCreative(

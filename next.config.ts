@@ -20,6 +20,9 @@ const nextConfig: NextConfig = {
   // Native / binary-heavy modules stay outside the server bundle.
   serverExternalPackages: ["sharp", "@node-rs/argon2", "pg", "yauzl", "yazl", "file-type"],
   experimental: {
+    // Keep visited pages in the client cache for 30 s: going back and forth between
+    // the library and a creative is instant. Server Actions still refresh what they change.
+    staleTimes: { dynamic: 30 },
     serverActions: {
       // Application logo uploads go through a server action.
       bodySizeLimit: "3mb",

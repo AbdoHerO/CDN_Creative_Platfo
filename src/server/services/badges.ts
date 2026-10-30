@@ -50,3 +50,41 @@ export async function setCreativeBadges(actor: ActorWithName, creativeId: string
     );
   });
 }
+
+/**
+ * Add (or remove) one badge on many creatives at once. Creatives the actor may
+ * not edit are skipped and counted.
+ */
+export async function bulkSetBadge(actor: ActorWithName, creativeIds: string[], badgeId: string, mode: "add" | "remove", meta?: RequestMeta | null) {
+  return prisma.$transaction(async (tx) => {
+    const badge = await tx.badge.findUnique({ where: { id: badgeId }, select: { id: true, name: true } });
+    if (!badge) throw new NotFoundError("Badge not found.");
+    const unique = [...new Set(creativeIds)];
+    const creatives = await tx.creative.findMany({
+      where: { id: { in: unique } },
+      select: { id: true, name: true, status: true, applicationId: true, createdById: true, submittedAt: true },
+    });
+    const editable = creatives.filter((c) => canEditCreative(actor, c));
+    const ids = editable.map((c) => c.id);
+    if (mode === "add") await tx.creativeBadge.createMany({ data: ids.map((creativeId) => ({ creativeId, badgeId })), skipDuplicates: true });
+    else await tx.creativeBadge.deleteMany({ where: { badgeId, creativeId: { in: ids } } });
+    if (ids.length) await tx.creative.updateMany({ where: { id: { in: ids } }, data: { updatedAt: new Date() } });
+    for (const c of editable) {
+      await logActivity(
+        {
+          actorId: actor.id,
+          action: "CREATIVE_UPDATED",
+          entityType: "CREATIVE",
+          entityId: c.id,
+          creativeId: c.id,
+          applicationId: c.applicationId,
+          summary: `${actor.name} ${mode === "add" ? "added" : "removed"} the badge “${badge.name}” ${mode === "add" ? "to" : "from"} “${c.name}”`,
+          metadata: { changed: ["badges"], badge: badge.name, mode },
+          meta,
+        },
+        tx,
+      );
+    }
+    return { updated: ids.length, skipped: unique.length - ids.length, badge: badge.name };
+  });
+}

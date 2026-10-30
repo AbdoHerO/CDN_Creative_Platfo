@@ -1,12 +1,15 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { preconnect } from "react-dom";
 import { AppSidebar } from "@/components/layout/app-sidebar";
+import { InstallPrompt } from "@/components/layout/install-prompt";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { TopBar } from "@/components/layout/top-bar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { requireUser } from "@/lib/auth/current-user";
 import { prisma } from "@/lib/db";
 import { can, permissionsFor } from "@/lib/permissions";
+import { storageEndpointOrigin } from "@/lib/storage/s3";
 import { creativeVisibilityWhere } from "@/lib/visibility";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -24,6 +27,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     prisma.notification.count({ where: { userId: user.id, readAt: null } }),
   ]);
   const sidebarOpen = (await cookies()).get("sidebar_state")?.value !== "false";
+  // Open the connection to the storage server early: thumbnails and videos come from there.
+  const storage = storageEndpointOrigin();
+  if (storage) preconnect(storage);
 
   return (
     <SidebarProvider defaultOpen={sidebarOpen}>
@@ -41,7 +47,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         {/* Bottom padding leaves room for the mobile bottom bar. */}
         <div className="flex-1 px-3 pb-28 pt-4 sm:px-6 sm:pt-6 md:pb-12 lg:px-8">{children}</div>
       </SidebarInset>
-      <MobileNav canUpload={can(user.role, "creative.upload")} showQueue={user.role !== "VIEWER"} queueCount={queueCount} />
+      <MobileNav
+        canUpload={can(user.role, "creative.upload")}
+        showQueue={user.role !== "VIEWER"}
+        queueCount={queueCount}
+        user={{ name: user.name, email: user.email, role: user.role }}
+        permissions={permissionsFor(user.role)}
+      />
+      <InstallPrompt />
     </SidebarProvider>
   );
 }

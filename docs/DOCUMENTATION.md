@@ -15,7 +15,7 @@ This document covers everything: what the platform does, how each screen works, 
 2. [Quick start](#2-quick-start)
 3. [Key concepts and glossary](#3-key-concepts-and-glossary)
 4. [User guide](#4-user-guide)
-   - [Signing in](#41-signing-in-and-passwords) · [Navigation](#42-navigation-and-shortcuts) · [Dashboard](#43-dashboard) · [Creative Library](#44-creative-library) · [Creative details](#45-creative-details) · [Uploading](#46-uploading-files) · [Full and preview versions](#47-full-and-preview-versions) · [ZIP import](#48-zip-import) · [Validation](#49-validation-workflow) · [Applications](#410-applications) · [Campaigns](#411-campaigns) · [Team and users](#412-team-and-users) · [Activity history](#413-activity-history) · [Notifications](#414-notifications) · [Storage](#415-storage) · [Settings](#416-settings) · [Profile](#417-profile)
+   - [Signing in](#41-signing-in-and-passwords) · [Navigation](#42-navigation-and-shortcuts) · [Dashboard](#43-dashboard) · [Creative Library](#44-creative-library) · [Creative details](#45-creative-details) · [Uploading](#46-uploading-files) · [Full and preview versions](#47-full-and-preview-versions) · [ZIP import](#48-zip-import) · [Validation](#49-validation-workflow) · [Applications](#410-applications) · [Campaigns](#411-campaigns) · [Team and users](#412-team-and-users) · [Activity history](#413-activity-history) · [Notifications](#414-notifications) · [Storage](#415-storage) · [Settings](#416-settings) · [Profile](#417-profile) · [Installing on a phone](#418-installing-the-app-on-a-phone-or-tablet)
 5. [Roles and permissions](#5-roles-and-permissions)
 6. [Supported file formats](#6-supported-file-formats)
 7. [How it works](#7-how-it-works)
@@ -144,7 +144,13 @@ The collapsible **sidebar** has four groups. Entries you are not allowed to use 
 | Validation | Pending Validation (with a live count badge), Approved, Declined, Archived |
 | Administration | Team & Users, Activity History, Storage, Settings |
 
-The **top bar** has global search, notifications, a quick **Upload** button and the user menu (profile, settings, theme, sign out).
+The **top bar** has global search, notifications, a quick **Upload** button and the user menu (profile, settings, theme, sign out). On tablets and computers the sidebar closes by itself after you pick a page.
+
+**On phones** (below 768 px) the sidebar is replaced by an app-style **bottom bar**: **Library**, **Search**, **+** (Upload), **Validation** (with the queue count) and **Menu**. **Menu** opens a sheet from the bottom with your profile, every section as a large tile, the theme and **Sign out**; it closes when you pick a section, tap outside, swipe it down or press back. Other phone adaptations:
+- forms and dialogs (edit creative, new campaign, workflow confirmations…) open as **bottom sheets** that scroll, with their buttons pinned to the bottom of the screen and a large close button;
+- the Team, Activity and Campaigns tables become **cards**; filter chips scroll sideways in one row;
+- the layout keeps clear of the notch and the home indicator (`viewport-fit=cover` with safe-area padding), so the bottom bar stays in place when the browser's toolbar shows or hides while scrolling;
+- toasts appear above the bottom bar.
 
 | Shortcut | Action |
 |---|---|
@@ -177,6 +183,10 @@ All figures come live from the database and respect your permissions (a viewer o
 - **On phones** the library works like a short-video app: a two-column grid, a **Filters** button that opens every filter in a bottom sheet, and a bottom bar (Library, Search, **+** Upload, Validation, Menu). **Tapping a card opens a full-screen feed**: swipe up and down between creatives, the visible video plays automatically (muted; tap **Sound**), the next one is preloaded, and the right-hand rail offers Details, Download, Pause and Share. The phone's back gesture closes the feed. The feed contains the creatives of the current page.
 - **Search** across names, descriptions, keywords, tags, campaign names, application names and original filenames. Every word must match (`summer banner` finds creatives that match both words).
 - **Badges** appear on each thumbnail (and under the name in list view).
+- **Edit badges mode** (admins and managers). **Edit badges**, next to the result count, turns the page into an editor, so badges no longer have to be set creative by creative:
+  - each card shows its badges with a **×** to remove one and a **Badge** button to tick badges on or off, or to type a new name and create it in any colour (eight presets or the colour picker). Changes are saved at once;
+  - tapping a card selects it (a tick appears). A floating bar acts on the whole selection: **Select page** / **Unselect all**, **Add badge**, **Remove badge** and **Submit** (submits every selected draft or declined creative for validation). Creatives you may not change are skipped and counted in the confirmation message;
+  - **Done** (or **×** on the bar) leaves the mode. It works in grid and list view, and on the Pending Validation, Approved, Declined and Archived pages too.
 - **Filters**, which can all be combined: application, campaign, media type (video, image, document, audio), category, **badge**, status, tag, uploader, file format (`mp4`, `png`, …) and a date range.
 - **Sort:** newest first, oldest first, alphabetical, recently updated, largest files, smallest files.
 - **Pagination:** 24, 48 or 96 items per page (the default is set by an admin).
@@ -209,12 +219,13 @@ The **Approved**, **Declined** and **Archived** pages are the same library, fixe
 `/creatives/<id>` shows one creative.
 
 **Viewer.** Files are previewed in the browser and never forced to download:
-- **Video:** a custom player with poster frame, big play button, a seek bar showing what is buffered and the time under the pointer, back/forward 10 seconds, volume, playback speed (0.5× to 2×), picture-in-picture and full screen. Controls hide while the video plays and come back when you move the mouse. Keyboard (click the player first): `Space`/`K` play or pause, `←`/`→` 5 seconds, `J`/`L` 10 seconds, `↑`/`↓` volume, `M` mute, `F` full screen; double-click for full screen. If the browser cannot play the format (MKV, AVI, some codecs), the page offers the `_preview` version or a download.
+- **Video:** a custom player with poster frame, big play button, a seek bar showing what is buffered and the time under the pointer, back/forward 10 seconds, volume, playback speed (0.5× to 2×), picture-in-picture and full screen. Controls hide while the video plays and come back when you move the mouse. Keyboard (click the player first): `Space`/`K` play or pause, `←`/`→` 5 seconds, `J`/`L` 10 seconds, `↑`/`↓` volume, `M` mute, `F` full screen; double-click for full screen. If the browser cannot play the format (MKV, AVI, some codecs), the page plays the streaming copy when there is one, otherwise it offers the `_preview` version or a download.
+  - **Playback quality.** Heavy videos (above 4 Mbit/s) and MKV/AVI files get a **streaming copy** made by the worker: 720p H.264, about 2.5 Mbit/s at most, ready to play before it is fully downloaded (often 10 to 15 times smaller than the original). Under the player, **Playback: Smooth · 720p / Original** switches between it and the uploaded file without losing the position. Phones, tablets and slow or data-saving connections start on *Smooth*; computers start on *Original*. Each device remembers the choice. **Download** always returns the original.
 - **Image:** zoomable viewer (zoom with the buttons or the mouse wheel, drag to pan, fit to screen, actual size 100%, full screen). Formats browsers cannot display (TIFF, HEIC, PSD) are shown through a high-resolution WebP rendition made by the worker. The original is never changed.
 - **PDF:** a reader built on pdf.js: page thumbnails on the left, continuous scrolling (pages are drawn as they come into view), selectable and copyable text, zoom (*Fit width*, *Fit page*, 50 % to 300 %, `Ctrl`/`⌘` + mouse wheel), rotation, page number entry, full screen, open in a new tab and download. Keyboard (click the reader first): `←`/`→` or `Page Up`/`Page Down` previous and next page, `Home`/`End` first and last page, `+`/`−` zoom, `0` fit width, `F` full screen. Library cards of PDFs show the first page, the page count and a **PDF** tag.
 - **Audio:** audio player.
 
-**Badges.** Under the title. Anyone who may edit the creative clicks **Add badge** / **Edit badges** and ticks badges on or off; the change is saved at once. Admins and managers can also type a new name to create a badge.
+**Badges.** Under the title. Anyone who may edit the creative clicks **Add badge** / **Edit badges** and ticks badges on or off; the change is saved at once. Admins and managers can also type a new name to create a badge, in one of eight preset colours or any colour from the colour picker. Badge text switches between white and dark to stay readable on light colours.
 
 **Version selector.** When a creative has several versions, buttons such as **FULL VERSION — 185 MB** and **PREVIEW VERSION — 11 MB** switch the viewer. **Preview** and **Download** always apply to the selected version, and **Download** returns the original bytes with the original filename.
 
@@ -227,7 +238,7 @@ The **Approved**, **Declined** and **Archived** pages are the same library, fixe
 
 **Actions** (shown only when you are allowed): workflow actions (submit, approve, decline, …), **Edit** metadata, **Upload new version**, **Replace file**, **Archive**, **Restore**, **Delete permanently**.
 
-**Replace file** (under the viewer, or in a version's menu) swaps the selected file for another one of the same kind: a video for a video, an image for an image. After you choose the new file, a red warning shows the old and new names and the space that will be freed, and you confirm with **Replace and delete old file**. Once the new file is uploaded and checked, the old file, its thumbnail and display rendition are **deleted from storage**. The new file keeps the same version number (for example *Full v1*), and the activity log records the replacement. Replacing the current full version of an approved creative returns it to draft when **Settings → Platform → Re-validate after a new full version** is on. Use **Upload version** instead when you want to keep the previous file in the history.
+**Replace file** (under the viewer, or in a version's menu) swaps the selected file for another one of the same kind: a video for a video, an image for an image. After you choose the new file, a red warning shows the old and new names and the space that will be freed, and you confirm with **Replace and delete old file**. Once the new file is uploaded and checked, the old file, its thumbnail and its display rendition or streaming copy are **deleted from storage**. The new file keeps the same version number (for example *Full v1*), and the activity log records the replacement. Replacing the current full version of an approved creative returns it to draft when **Settings → Platform → Re-validate after a new full version** is on. Use **Upload version** instead when you want to keep the previous file in the history.
 
 When a preview-only creative may belong to an existing full version, a **link card** suggests the match so you can confirm it.
 
@@ -348,7 +359,7 @@ Rules:
 - When a new full version is uploaded to an approved creative, it goes back to *Draft* (history entry "Returned to draft (new full version)"). Admins can turn this off in **Settings → Platform**.
 - Each step records the creative, the previous and new status, the reviewer, the time, the comment or reason and the file version reviewed. The status change, history row, audit entry and notifications are saved together in one database transaction.
 
-The **Pending Validation** page (`/validation`) is the reviewers' queue, with approve, decline and request-changes buttons on each item.
+The **Pending Validation** page (`/validation`) has the library's look (same cards, search, filters, content tabs and views) with three tabs and their counts: **Pending** (submitted, waiting for a reviewer), **In review** and **Drafts** (not submitted yet). Under each card are the actions you may use: *Submit* on drafts, *Start review*, *Approve*, *Request changes* and *Decline* for reviewers, *Withdraw* for the owner. Reviewers see every creative they can access; creators see their own. When nothing is waiting but drafts exist, the page opens on **Drafts**. To submit several drafts at once, use **Edit badges**, select the cards and press **Submit**. The tab is kept in the URL (`/validation?tab=PENDING`, `IN_REVIEW` or `DRAFT`).
 
 ### 4.10 Applications
 
@@ -417,6 +428,22 @@ You never get a notification for your own action. Notifications can be marked re
 ### 4.17 Profile
 
 `/profile`: edit your name and job title, change your password, see and **revoke your active sessions** (device, IP address, last activity) and see your recent activity.
+
+### 4.18 Installing the app on a phone or tablet
+
+Creative Hub can be added to the home screen of a phone or tablet. It then has its own icon and opens full screen on the library, without the browser's bars, like a native app. This relies on the web app manifest (`/manifest.webmanifest`, from `src/app/manifest.ts`) and the icons in `public/icons`, and needs HTTPS (or `localhost`).
+
+- **Android** (Chrome, Edge, Samsung Internet): the prompt's **Install** button opens the browser's own install dialog, which adds the icon to the home screen.
+- **iPhone and iPad** (Safari; Chrome and Edge on iOS 16.4 and later): iOS does not let a site install itself, so the prompt shows the steps: **Share** → **Add to Home Screen** → **Add**. **I've added it** stops the prompt.
+
+The prompt is shown sparingly:
+- only on touch devices (phones and tablets): never on computers, inside the installed app, or in a social app's built-in browser;
+- only after some use: from the second page of a visit, or after 30 seconds. Never on Upload, ZIP import review or Change password, and never on top of another dialog;
+- at most once per browser session;
+- **Not now** (or closing it) hides it for 7 days, then for 30 days. After the third time it is no longer shown automatically. **Don't ask again** and installing stop it for good;
+- on Android it is offered only when the browser reports that the app can be installed, so not when it already is.
+
+It can always be opened on demand: **Menu → Install the app** on phones, **user menu → Install app** on tablets. The choice is stored in the browser (`localStorage` key `creative-hub:install`), so clearing the site's data resets it. To regenerate the icons from the brand mark, run `node scripts/generate-icons.mjs`.
 
 ---
 
@@ -540,12 +567,13 @@ The worker (`npm run worker`) claims jobs from the `Job` table with `FOR UPDATE 
 | `PROCESS_FILE` | Streams the original from storage, recomputes SHA-256 and compares it with the browser's checksum (a mismatch flags the file and notifies the uploader), extracts metadata (ffprobe for video and audio, sharp for images, pdfinfo for PDFs) and makes the thumbnail and display rendition (ffmpeg, sharp, pdftoppm) |
 | `ANALYZE_IMPORT` | Reads a ZIP's directory, applies the safety checks, sniffs each entry's content and builds the review list with suggestions |
 | `RUN_IMPORT` | Extracts the confirmed entries, uploads them to storage and registers creatives and versions |
+| `MAKE_STREAM` | Makes the streaming copy of a heavy video (or of an MKV/AVI file): downloads the original, transcodes it with ffmpeg to 720p H.264 with its index first (two threads, so it never takes the whole server) and stores it as a separate object. The outcome is kept in the file's metadata (`streamCopy`: ready, skipped or failed), so a video is never transcoded twice for nothing; a copy that would save less than 20 % is not kept |
 | `DELETE_OBJECTS` | Deletes stored objects after a creative or version is deleted |
 | `RECONCILE_STORAGE` | Compares the bucket with the database (Storage → Reconcile) |
 
 - **Retries:** a failed job is retried with exponential backoff (15 s, 30 s, 60 s, … up to 30 minutes) until it runs out of attempts, then marked `FAILED` with its last error and counted in **Settings → System status**.
 - **Heartbeats:** a running job is refreshed regularly. If a worker dies, its jobs are re-queued after 5 minutes without a heartbeat.
-- **Maintenance** (every 5 minutes, one replica at a time through a PostgreSQL advisory lock): deletes expired sessions and old rate-limit windows, aborts upload sessions older than `UPLOAD_SESSION_TTL_HOURS` and frees their storage, removes empty creatives left by failed uploads, and purges completed jobs after 7 days and failed jobs after 30 days.
+- **Maintenance** (every 5 minutes, one replica at a time through a PostgreSQL advisory lock): deletes expired sessions and old rate-limit windows, aborts upload sessions older than `UPLOAD_SESSION_TTL_HOURS` and frees their storage, removes empty creatives left by failed uploads, and purges completed jobs after 7 days and failed jobs after 30 days. While the queue is idle it also queues streaming copies for up to 3 videos processed before this feature existed, so existing libraries catch up gradually without slowing uploads.
 - **Shutdown:** on `SIGTERM` or `SIGINT` the worker stops claiming new jobs and waits up to 60 seconds for running jobs to finish. An interrupted job is picked up again later.
 - **Logs** are JSON lines on stdout.
 
@@ -560,6 +588,7 @@ Object keys use immutable ids, so renaming a creative never moves files.
 | `originals/<applicationId>/<creativeId>/<fileId>/<safe-filename>` | Original files, byte-for-byte |
 | `derived/<fileId>/thumbnail.webp` | Thumbnail |
 | `derived/<fileId>/display.webp` | Display rendition for formats browsers cannot show |
+| `derived/<fileId>/stream.mp4` | Streaming copy of a heavy video (720p H.264); the original stays untouched |
 | `imports/<batchId>/…` | ZIP archives (kept only if requested) |
 | `branding/…` | Application logos |
 
@@ -569,7 +598,16 @@ The original filename is stored in the database and sent back on download throug
 
 - `GET /api/files/<id>/download` checks permission, logs a `FILE_DOWNLOADED` audit entry and redirects to a presigned storage URL valid for 5 minutes (`DOWNLOAD_URL_TTL_SECONDS`).
 - `GET /api/files/<id>/preview` redirects to an inline presigned URL valid for 4 hours (`SIGNED_URL_TTL_SECONDS`), which the video player and PDF viewer use.
-- Thumbnail URLs are signed with an hour-rounded timestamp, so the same URL is reused for an hour and cached by the browser.
+- **In-app media is cacheable.** Thumbnails, display renditions, hover previews, the phone feed's videos and the video, image or PDF on the creative page use *stable* presigned URLs: they are signed at the start of a window of half of `SIGNED_URL_TTL_SECONDS` (2 hours by default, at least 1 hour) and stay valid for the full TTL. Every page load in that window gets the same URL, and the response carries `Cache-Control: private, max-age=<window>` (S3 `response-cache-control`, honoured by RustFS). Coming back to a creative or the library therefore plays and shows from the browser cache instead of downloading again.
+- Downloads and the *open in a new tab* preview keep short-lived, unique URLs.
+
+#### Speed of navigation
+
+- Every section has a **loading screen** (`loading.tsx`: a skeleton shaped like the page). It is prefetched, so tapping a link changes the screen at once while the server renders the page, instead of waiting with nothing happening.
+- **Client cache:** pages visited in the last 30 seconds are shown again without a server round-trip (`experimental.staleTimes.dynamic = 30` in `next.config.ts`). Server Actions still refresh what they change.
+- The app layout **preconnects** to the storage server, so the first thumbnails and videos do not wait for a new TLS connection.
+- The library's hover previews and the phone feed play the lightest file available: the `_preview` version, else the streaming copy, else the original. Neighbouring videos in the feed buffer ahead only when they are light; a full original (often 10 to 25 Mbit/s) is only loaded once it is on screen, so it never takes the bandwidth of the video being watched.
+- Responses carry `X-Accel-Buffering: no`, so an Nginx reverse proxy streams the loading screen and content instead of buffering the whole page.
 
 ---
 
@@ -621,6 +659,7 @@ Further diagrams (entity relationships, matching and workflow state machine) are
 | Authorisation | Checked on every page, Server Action and route handler; resource-level checks; role-scoped queries; inaccessible resources return 404 |
 | CSRF | Built-in origin check for Server Actions; same-origin check (`Origin` and Fetch-Metadata headers) for mutating API routes |
 | Rate limiting | Failed sign-ins (8 per account and, with `TRUST_PROXY`, 30 per IP per 15 minutes), password changes, search, uploads, downloads, lookups, ZIP imports and CSV exports, stored in PostgreSQL |
+| Public paths | Only `/login`, `/api/health` and static files (`_next/static`, `pdfjs/`, `icons/`, `manifest.webmanifest`, `robots.txt`) are served without a session. The manifest and icons must stay public so that phones can install the app from the sign-in page |
 | HTTP headers | Per-request nonce Content-Security-Policy, `frame-ancestors 'none'`, HSTS in production, `nosniff`, Referrer-Policy, Permissions-Policy, Cross-Origin-Opener-Policy |
 | Storage | Private bucket; RustFS credentials exist only on the server and are never sent to the browser; presigned URLs are limited to one object or part and expire quickly; the bucket is never publicly writable |
 | Uploads | Extension allow-list, size limits, stored-size check, content (magic byte) check, checksum verification |
@@ -804,12 +843,14 @@ If the storage variables are missing, the app still runs but shows "File storage
 | `ZIP_MAX_ENTRIES` | `5000` | Maximum entries per ZIP |
 | `ZIP_MAX_UNCOMPRESSED_MB` | `102400` | Maximum total uncompressed size |
 | `ZIP_MAX_COMPRESSION_RATIO` | `200` | Entries above this ratio are rejected as possible zip bombs |
-| `SIGNED_URL_TTL_SECONDS` | `14400` | Inline preview URL lifetime |
+| `SIGNED_URL_TTL_SECONDS` | `14400` | Lifetime of inline media URLs. Cacheable in-app media URLs are reused for half of it (at least 1 hour) |
 | `DOWNLOAD_URL_TTL_SECONDS` | `300` | Download URL lifetime |
 | `WORKER_CONCURRENCY` | `2` | Jobs processed at the same time per worker |
 | `WORKER_POLL_INTERVAL_MS` | `2000` | Queue polling interval when idle |
 | `WORKER_TMP_DIR` | OS temp dir | Scratch space; needs room for your largest file |
 | `FFMPEG_PATH`, `FFPROBE_PATH`, `PDFTOPPM_PATH`, `PDFINFO_PATH` | found on `PATH` | Tool locations |
+| `VIDEO_STREAM_COPY` | `true` | Make streaming copies of heavy videos ([4.5](#45-creative-details)); `false` turns it off |
+| `VIDEO_STREAM_MIN_MBPS` | `4` | Videos above this bitrate (Mbit/s) get a streaming copy; MKV and AVI always do |
 | `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_ADMIN_NAME` | `admin@example.com`, generated, `Platform Admin` | First admin account |
 | `SEED_DEMO_USERS`, `SEED_DEMO_PASSWORD` | `false`, `Demo-Password-2026` | Demo users and campaigns (development only) |
 
@@ -867,7 +908,7 @@ ENV_FILE=.env.prod docker compose up -d --force-recreate --remove-orphans
 
 The `Jenkinsfile` does the same with the env file stored as the Jenkins credential `creativehub_pro_env`, and runs `npx prisma migrate deploy` once before starting the containers. Tick **RUN_SEED** (*Build with Parameters*) to also run the full `npx prisma db seed`, which re-adds any missing initial platform or default badge; the first admin is already created by the bootstrap on every start. The worker's temporary folder (`WORKER_TMP_DIR`, default `/tmp`) must have room for the largest file or ZIP being processed.
 
-Put the web container and RustFS behind HTTPS (Caddy, Nginx or Traefik) and set `TRUST_PROXY=true`.
+Put the web container and RustFS behind HTTPS (Caddy, Nginx or Traefik) and set `TRUST_PROXY=true`. Pages are streamed (loading screen first): the app sends `X-Accel-Buffering: no` for Nginx; other proxies must not buffer responses either. HTTPS is also required for installing the app on phones ([4.18](#418-installing-the-app-on-a-phone-or-tablet)).
 
 ### 13.2 Managed platforms
 
@@ -920,7 +961,7 @@ Integration defaults are the database `cmp_test` on localhost and S3 on `http://
 npm run test:e2e
 ```
 
-Runs Playwright against a running app (`http://localhost:3000`, or `E2E_BASE_URL`), with the worker running and demo users seeded. Set `E2E_ADMIN_PASSWORD` to your seeded admin password (the default, `ChangeMe!2026`, is CI's). It covers sign-in, role-based access, the full creative journey (upload of a full version and its preview, the preview toggle, the version selector, byte-identical download, submit, decline with reason, resubmit, approve, viewer access, activity log) and the admin screens.
+Runs Playwright against a running app (`http://localhost:3000`, or `E2E_BASE_URL`), with the worker running and demo users seeded. Set `E2E_ADMIN_PASSWORD` to your seeded admin password (the default, `ChangeMe!2026`, is CI's). It covers sign-in, role-based access, the full creative journey (upload of a full version and its preview, the preview toggle, the version selector, byte-identical download, submit, decline with reason, resubmit, approve, viewer access, activity log) and the admin screens. A phone run (iPhone 13 viewport, `e2e/mobile.spec.ts`) checks the bottom bar and menu sheet, dialogs as bottom sheets, the validation tabs and bulk badge editing in the library.
 
 CI (`.github/workflows/ci.yml`) runs lint, typecheck, dependency audit, unit and integration tests, the production build and the end-to-end tests on every push and pull request.
 
@@ -1009,10 +1050,12 @@ prisma/
 scripts/
   storage-setup.ts       bucket check / creation and CORS
   copy-pdfjs.mjs         copies the pdf.js worker, fonts, CMaps and decoders to public/pdfjs (git-ignored)
+  generate-icons.mjs     home-screen icons in public/icons, drawn from the brand mark
   demo-media.ts          sample creatives for development
 src/
   proxy.ts               CSP nonce, security headers, sign-in redirect
   app/
+    manifest.ts          web app manifest (install on phones and tablets)
     (auth)/              login, change-password
     (app)/               dashboard, library, creatives/[id], upload, imports/[id],
                          applications(/[id]), campaigns(/[id]), validation, approved,
@@ -1020,7 +1063,9 @@ src/
                          settings, profile
     api/                 uploads, imports, files, search, notifications,
                          creatives/lookup, activity/export, health
-  components/            ui/ (shadcn), layout/, library/, creatives/, upload/,
+  components/            ui/ (shadcn), layout/ (sidebar, top bar, phone bottom bar and
+                         menu, install prompt), library/ (reels grid, feed, badge edit
+                         mode), creatives/, upload/,
                          imports/, charts/, team/, settings/, … 
   lib/                   env, db, auth/, permissions, visibility, workflow,
                          files/ (types, naming, matching), storage/ (s3, keys), load-env,

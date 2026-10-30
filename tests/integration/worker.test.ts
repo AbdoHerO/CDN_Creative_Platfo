@@ -6,9 +6,10 @@ import { headObject, putObject } from "@/lib/storage/s3";
 import { attachFile, createCreativeRecord } from "@/server/services/creatives";
 import { analyzeImport, runImport } from "@/worker/handlers/imports";
 import { processFile } from "@/worker/handlers/process-file";
+import { backfillStreamCopies, makeStream } from "@/worker/handlers/stream-copy";
 import { claimJob, completeJob, failJob } from "@/worker/queue";
 import { buildZip } from "../support/zip-writer";
-import { mp4Bytes, pngBytes, readObject, resetDatabase, seedWorld, sha256, type World } from "./helpers";
+import { heavyVideoBytes, mp4Bytes, pngBytes, readObject, resetDatabase, seedWorld, sha256, type World } from "./helpers";
 
 let world: World;
 
@@ -69,6 +70,69 @@ describe("file processing worker", () => {
     const note = await prisma.notification.findFirstOrThrow({ where: { type: "INTEGRITY_FAILED" } });
     expect(note.userId).toBe(world.users.creator.id);
     expect(await prisma.activityLog.count({ where: { action: "FILE_INTEGRITY_FAILED" } })).toBe(1);
+  });
+});
+
+/** Top-level MP4 boxes in order (enough to tell where the index sits). */
+function mp4Boxes(buf: Buffer) {
+  const boxes: string[] = [];
+  for (let off = 0; off + 8 <= buf.length && boxes.length < 8; ) {
+    const size = buf.readUInt32BE(off);
+    boxes.push(buf.toString("latin1", off + 4, off + 8));
+    if (size < 8) break;
+    off += size;
+  }
+  return boxes;
+}
+
+describe("streaming copies", () => {
+  it("queues a light 720p copy of a heavy video, stores it beside the untouched original, and plays it fast-start", async () => {
+    const heavy = await heavyVideoBytes("mp4", 2, "1280x720", "8M");
+    const file = await storedFile(heavy, "heavy_reel.mp4", "video/mp4", "VIDEO");
+    await processFile({ fileId: file.id });
+    const job = await prisma.job.findFirstOrThrow({ where: { type: "MAKE_STREAM" } });
+    expect(job.payload).toEqual({ fileId: file.id });
+
+    await makeStream({ fileId: file.id });
+    const after = await prisma.creativeFile.findUniqueOrThrow({ where: { id: file.id } });
+    expect(after.displayKey).toBe(`derived/${file.id}/stream.mp4`);
+    expect(after.displayBytes).toBeLessThan(heavy.length);
+    expect((after.metadata as { streamCopy?: string }).streamCopy).toBe("ready");
+    const copy = await readObject(after.displayKey!);
+    const boxes = mp4Boxes(copy);
+    expect(boxes.indexOf("moov")).toBeGreaterThan(-1);
+    expect(boxes.indexOf("moov")).toBeLessThan(boxes.indexOf("mdat"));
+    expect(sha256(await readObject(after.storageKey))).toBe(sha256(heavy));
+
+    // Processing the file again keeps its streaming copy.
+    await processFile({ fileId: file.id });
+    expect((await prisma.creativeFile.findUniqueOrThrow({ where: { id: file.id } })).displayKey).toBe(after.displayKey);
+  });
+
+  it("makes MKV videos playable in browsers, and the backfill skips light videos for good", async () => {
+    const mkv = await heavyVideoBytes("matroska", 1, "320x180", "1M");
+    const file = await storedFile(mkv, "clip.mkv", "video/x-matroska", "VIDEO");
+    await processFile({ fileId: file.id });
+    expect(await prisma.job.count({ where: { type: "MAKE_STREAM" } })).toBe(1);
+    const light = await storedFile(await mp4Bytes(1), "light.mp4", "video/mp4", "VIDEO");
+    await processFile({ fileId: light.id });
+    expect(await prisma.job.count({ where: { type: "MAKE_STREAM" } })).toBe(1);
+    // Start from an idle queue, as for videos processed before streaming copies existed.
+    await prisma.job.deleteMany();
+
+    // The backfill (videos processed before this feature) queues the MKV and marks the light MP4 as not needing one.
+    expect(await backfillStreamCopies()).toBe(1);
+    const queued = await prisma.job.findFirstOrThrow({ where: { type: "MAKE_STREAM" } });
+    expect(queued.payload).toEqual({ fileId: file.id });
+    const lightAfter = await prisma.creativeFile.findUniqueOrThrow({ where: { id: light.id } });
+    expect((lightAfter.metadata as { streamCopy?: string }).streamCopy).toBe("skipped");
+    // Nothing is queued while other jobs wait.
+    expect(await backfillStreamCopies()).toBe(0);
+
+    await makeStream({ fileId: file.id });
+    const after = await prisma.creativeFile.findUniqueOrThrow({ where: { id: file.id } });
+    expect(after.displayKey).toBe(`derived/${file.id}/stream.mp4`);
+    expect((await headObject(after.displayKey!))?.contentType).toBe("video/mp4");
   });
 });
 

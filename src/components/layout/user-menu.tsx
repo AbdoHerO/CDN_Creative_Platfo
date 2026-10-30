@@ -1,6 +1,6 @@
 "use client";
 
-import { LogOut, Monitor, Moon, Settings, Sun, User } from "lucide-react";
+import { Download, LogOut, Monitor, Moon, Settings, Sun, User } from "lucide-react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
 import { UserAvatar } from "@/components/common/user-avatar";
@@ -22,9 +22,11 @@ import {
 import { ROLE_LABELS } from "@/lib/constants";
 import type { RoleKey } from "@/generated/prisma/enums";
 import { logoutAction } from "@/server/actions/auth";
+import { OPEN_INSTALL_EVENT, useInstallAvailable } from "./install-prompt";
 
 export function UserMenu({ user }: { user: { name: string; email: string; role: RoleKey } }) {
   const { theme, setTheme } = useTheme();
+  const canInstall = useInstallAvailable();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -70,6 +72,11 @@ export function UserMenu({ user }: { user: { name: string; email: string; role: 
               </DropdownMenuRadioGroup>
             </DropdownMenuSubContent>
           </DropdownMenuSub>
+          {canInstall && (
+            <DropdownMenuItem onSelect={() => setTimeout(() => window.dispatchEvent(new Event(OPEN_INSTALL_EVENT)), 150)}>
+              <Download /> Install app
+            </DropdownMenuItem>
+          )}
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <form action={logoutAction}>

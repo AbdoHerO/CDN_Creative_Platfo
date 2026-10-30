@@ -29,12 +29,12 @@ export function StatCard({
   const body = (
     <div
       className={cn(
-        "flex h-full flex-col gap-3 rounded-xl border bg-card p-4 shadow-xs transition-colors",
+        "flex h-full flex-col gap-3 rounded-xl border bg-card p-4 shadow-xs transition-colors max-sm:gap-1.5 max-sm:rounded-2xl max-sm:p-3 active:scale-[0.99]",
         href && "hover:border-foreground/15 hover:bg-muted/30",
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm text-muted-foreground">{label}</span>
+        <span className="text-sm text-muted-foreground max-sm:text-xs">{label}</span>
         {Icon && (
           <span className={cn("flex size-7 items-center justify-center rounded-md", tones[tone])}>
             <Icon className="size-3.5" />

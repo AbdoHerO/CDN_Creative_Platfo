@@ -98,8 +98,9 @@ test.describe.serial("creative lifecycle", () => {
   });
 
   test("manager must give a reason to decline", async ({ page }) => {
-    await login(page, "manager", `/validation`);
-    const item = page.getByTestId("queue-item").filter({ hasText: displayName });
+    await login(page, "manager", `/validation?tab=PENDING&view=grid&q=${stamp}`);
+    // Same cards as the library, with the validation buttons under each one.
+    const item = page.locator("main li").filter({ hasText: displayName });
     await expect(item).toBeVisible();
     await item.getByTestId("workflow-decline").click();
     await expect(page.getByTestId("workflow-confirm")).toBeDisabled();

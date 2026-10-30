@@ -53,6 +53,11 @@ const schema = z.object({
   FFPROBE_PATH: z.string().default("ffprobe"),
   PDFTOPPM_PATH: z.string().default("pdftoppm"),
   PDFINFO_PATH: z.string().default("pdfinfo"),
+
+  /** Make a lighter 720p copy of heavy videos (and of MKV/AVI) for smooth playback in the app. On unless "false". */
+  VIDEO_STREAM_COPY: boolish,
+  /** Videos above this bitrate (Mbit/s) get a streaming copy. */
+  VIDEO_STREAM_MIN_MBPS: z.coerce.number().min(0).default(4),
 });
 
 export type Env = z.infer<typeof schema>;

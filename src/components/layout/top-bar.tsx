@@ -2,6 +2,7 @@
 
 import { Plus } from "lucide-react";
 import Link from "next/link";
+import { BrandMark } from "@/components/brand";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -20,9 +21,12 @@ export function TopBar({
   initialUnread: number;
 }) {
   return (
-    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b bg-background/85 px-3 backdrop-blur supports-[backdrop-filter]:bg-background/70 sm:px-4">
-      <SidebarTrigger className="-ml-1" />
-      <Separator orientation="vertical" className="mx-1 h-5 data-[orientation=vertical]:h-5" />
+    <header className="sticky top-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center pt-[env(safe-area-inset-top)] gap-2 border-b bg-background/85 px-3 backdrop-blur supports-[backdrop-filter]:bg-background/70 sm:px-4">
+      <SidebarTrigger className="-ml-1 hidden md:inline-flex" />
+      <Separator orientation="vertical" className="mx-1 hidden h-5 data-[orientation=vertical]:h-5 md:block" />
+      <Link href="/library" className="shrink-0 md:hidden" aria-label="Creative Hub">
+        <BrandMark className="size-8 rounded-xl" />
+      </Link>
       <GlobalSearch />
       <div className="ml-auto flex items-center gap-1.5">
         {canUpload && (

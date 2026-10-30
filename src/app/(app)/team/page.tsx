@@ -7,6 +7,7 @@ import { requirePagePermission } from "@/lib/auth/current-user";
 import { ROLE_LABELS } from "@/lib/constants";
 import { prisma } from "@/lib/db";
 import { formatNumber, timeAgo } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Team & Users" };
 
@@ -41,10 +42,11 @@ export default async function TeamPage() {
           </span>
         ))}
       </div>
+      {/* A table from sm up; on phones each row becomes a card (same markup, no hidden copy). */}
       <div className="overflow-hidden rounded-xl border bg-card shadow-xs">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] text-sm">
-            <thead>
+          <table className="w-full text-sm max-sm:block sm:min-w-[860px]">
+            <thead className="max-sm:hidden">
               <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
                 <th className="px-4 py-2.5 font-medium">User</th>
                 <th className="px-3 py-2.5 font-medium">Role</th>
@@ -55,7 +57,7 @@ export default async function TeamPage() {
                 <th className="px-3 py-2.5" />
               </tr>
             </thead>
-            <tbody className="divide-y">
+            <tbody className="divide-y max-sm:block">
               {users.map((u) => {
                 const teamUser = {
                   id: u.id,
@@ -68,8 +70,14 @@ export default async function TeamPage() {
                   applicationIds: u.applicationAccess.map((a) => a.applicationId),
                 };
                 return (
-                  <tr key={u.id} className={u.status === "DISABLED" ? "opacity-60" : undefined}>
-                    <td className="px-4 py-3">
+                  <tr
+                    key={u.id}
+                    className={cn(
+                      "max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-2 max-sm:gap-y-2 max-sm:px-4 max-sm:py-3",
+                      u.status === "DISABLED" && "opacity-60",
+                    )}
+                  >
+                    <td className="px-4 py-3 max-sm:w-[calc(100%-5.25rem)] max-sm:p-0">
                       <div className="flex items-center gap-3">
                         <UserAvatar name={u.name} className="size-8" />
                         <div className="min-w-0">
@@ -83,10 +91,10 @@ export default async function TeamPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-3 max-sm:order-1 max-sm:p-0">
                       <Badge variant={u.role.key === "ADMIN" ? "default" : "secondary"}>{ROLE_LABELS[u.role.key]}</Badge>
                     </td>
-                    <td className="px-3 py-3 text-xs">
+                    <td className="px-3 py-3 text-xs max-sm:order-1 max-sm:p-0">
                       {u.restrictApplications ? (
                         <span className="flex flex-wrap gap-1">
                           {u.applicationAccess.map((a) => (
@@ -100,9 +108,15 @@ export default async function TeamPage() {
                         <span className="text-muted-foreground">All applications</span>
                       )}
                     </td>
-                    <td className="tabular px-3 py-3">{formatNumber(u._count.createdCreatives)}</td>
-                    <td className="px-3 py-3 text-xs text-muted-foreground">{u.lastLoginAt ? timeAgo(u.lastLoginAt) : "Never"}</td>
-                    <td className="px-3 py-3">
+                    <td className="tabular px-3 py-3 max-sm:order-1 max-sm:p-0 max-sm:text-xs max-sm:text-muted-foreground">
+                      {formatNumber(u._count.createdCreatives)}
+                      <span className="sm:hidden"> creatives</span>
+                    </td>
+                    <td className="px-3 py-3 text-xs text-muted-foreground max-sm:order-1 max-sm:p-0">
+                      <span className="sm:hidden">Signed in </span>
+                      {u.lastLoginAt ? timeAgo(u.lastLoginAt) : "Never"}
+                    </td>
+                    <td className="px-3 py-3 max-sm:order-1 max-sm:p-0">
                       {u.status === "ACTIVE" ? (
                         u.mustChangePassword ? (
                           <span className="text-xs text-amber-700 dark:text-amber-300">Pending first sign-in</span>
@@ -113,7 +127,7 @@ export default async function TeamPage() {
                         <span className="text-xs text-muted-foreground">Disabled</span>
                       )}
                     </td>
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-3 max-sm:ml-auto max-sm:p-0">
                       <div className="flex justify-end gap-1">
                         <UserFormDialog user={teamUser} applications={applications} />
                         <UserRowActions user={teamUser} isSelf={u.id === me.id} />
