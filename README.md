@@ -2,8 +2,11 @@
 
 Centralised management of marketing creatives for **Win+Pharma, iCoral, Pharmalien and WinMed** (and any application added later): upload originals at full quality to Cloudflare R2, link full and `_preview` versions automatically, preview videos/images/PDFs in the browser, move every creative through a validation workflow, and track everything in an audit log.
 
+- **Complete documentation (features, user guide, how it works, setup, deployment, operations):** [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md)
 - **Architecture, data model and design decisions:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - **Requirements checklist and test results:** [`docs/CHECKLIST.md`](docs/CHECKLIST.md)
+
+> **Branch policy:** all development happens on `main`. Do not create or push to other branches. See [Development workflow](docs/DOCUMENTATION.md#17-development-workflow).
 
 ## Contents
 
