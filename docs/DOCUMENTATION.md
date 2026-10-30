@@ -747,6 +747,7 @@ npm run demo:media
 | `npm run db:migrate` | Apply migrations (`prisma migrate deploy`) |
 | `npm run db:migrate:dev` | Create a new migration after changing `schema.prisma` |
 | `npm run db:seed` | Seed roles, applications, admin (and demo data if enabled) |
+| `npm run db:bootstrap` | First-run bootstrap: roles, first admin if none, initial platforms and badges on an empty database (run by the production container on start) |
 | `npm run db:studio` | Open Prisma Studio to browse the database |
 | `npm run storage:setup [-- --create]` | Check the bucket, apply CORS (and create the bucket) |
 | `npm run demo:media` | Generate sample creatives (development) |
@@ -845,13 +846,13 @@ The platform is **two processes** that share one database and one bucket:
 
 ### 13.1 Docker Compose (single server)
 
-The `Dockerfile` builds one image (`creative-hub-prod`) in three stages: `deps` (`npm ci`, which also runs `prisma generate` and therefore copies `prisma/` and `prisma.config.ts`), `builder` (`npm run build`, with a placeholder `DATABASE_URL` that is only used at build time) and `runner`. The runner contains the built app, the Prisma schema and config, the worker source and the tools the worker needs (ffmpeg, poppler-utils). Its default command applies the migrations and starts the web app.
+The `Dockerfile` builds one image (`creative-hub-prod`) in three stages: `deps` (`npm ci`, which also runs `prisma generate` and therefore copies `prisma/` and `prisma.config.ts`), `builder` (`npm run build`, with a placeholder `DATABASE_URL` that is only used at build time) and `runner`. The runner contains the built app, the Prisma schema and config, the worker source and the tools the worker needs (ffmpeg, poppler-utils). Its default command applies the migrations, runs the first-run bootstrap (`prisma/bootstrap.ts`) and starts the web app. The bootstrap creates the roles and, **when no admin exists**, the first admin from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` / `SEED_ADMIN_NAME` (without a password of at least 10 characters it prints a temporary one in the container log, to change at first sign-in). On an empty database it also adds the four platforms and the default badges. It never changes existing data, so it is safe on every start.
 
 `docker-compose.yml` runs that image twice, with variables from `ENV_FILE` (default `.env.prod`):
 
 | Service | Command | Role |
 |---|---|---|
-| `creative-hub-prod` | `npx prisma migrate deploy && npm run start` | Web app on port 3000 |
+| `creative-hub-prod` | `npx prisma migrate deploy && npx tsx prisma/bootstrap.ts && npm run start` | Web app on port 3000 |
 | `creative-hub-worker` | `npm run worker` | Background jobs: ZIP imports, thumbnails, checksums, PDF page counts, deletions |
 
 Both join the external network `backend.prod` (where the reverse proxy and PostgreSQL live). Deploy with:
@@ -864,7 +865,7 @@ ENV_FILE=.env.prod docker compose build creative-hub-prod
 ENV_FILE=.env.prod docker compose up -d --force-recreate --remove-orphans
 ```
 
-The `Jenkinsfile` does the same with the env file stored as the Jenkins credential `creativehub_pro_env`, and runs `npx prisma migrate deploy` once before starting the containers. Tick **RUN_SEED** (*Build with Parameters*) to also run `npx prisma db seed`: needed once on a new database to create the first admin (`SEED_ADMIN_*`), the platforms, roles and default badges; re-running it keeps existing records. The worker's temporary folder (`WORKER_TMP_DIR`, default `/tmp`) must have room for the largest file or ZIP being processed.
+The `Jenkinsfile` does the same with the env file stored as the Jenkins credential `creativehub_pro_env`, and runs `npx prisma migrate deploy` once before starting the containers. Tick **RUN_SEED** (*Build with Parameters*) to also run the full `npx prisma db seed`, which re-adds any missing initial platform or default badge; the first admin is already created by the bootstrap on every start. The worker's temporary folder (`WORKER_TMP_DIR`, default `/tmp`) must have room for the largest file or ZIP being processed.
 
 Put the web container and RustFS behind HTTPS (Caddy, Nginx or Traefik) and set `TRUST_PROXY=true`.
 
