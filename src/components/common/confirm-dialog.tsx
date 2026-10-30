@@ -22,19 +22,29 @@ export function ConfirmDialog({
   confirmLabel = "Confirm",
   destructive,
   onConfirm,
+  open: controlledOpen,
+  onOpenChange,
 }: {
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
+  /** Controlled mode (e.g. opened from a dropdown menu item). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   title: string;
   description?: React.ReactNode;
   confirmLabel?: string;
   destructive?: boolean;
   onConfirm: () => Promise<boolean | void>;
 }) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const [pending, startTransition] = useTransition();
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = (v: boolean) => {
+    if (controlledOpen === undefined) setUncontrolledOpen(v);
+    onOpenChange?.(v);
+  };
   return (
     <AlertDialog open={open} onOpenChange={(v) => !pending && setOpen(v)}>
-      <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>
+      {trigger && <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>}
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>

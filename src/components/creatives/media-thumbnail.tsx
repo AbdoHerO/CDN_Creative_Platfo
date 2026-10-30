@@ -34,7 +34,14 @@ export function MediaThumbnail({
     <div className={cn("relative flex items-center justify-center overflow-hidden bg-muted", className)}>
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt={alt} loading="lazy" decoding="async" className="size-full object-cover" draggable={false} />
+        <img
+          src={url}
+          alt={alt}
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+          className={cn("size-full", mediaType === "DOCUMENT" ? "object-contain p-2 drop-shadow-sm" : "object-cover")}
+        />
       ) : (
         <div className="flex flex-col items-center gap-1.5 text-muted-foreground">
           {processingStatus === "PENDING" || processingStatus === "PROCESSING" ? (

@@ -43,7 +43,7 @@ export function UrlPagination({
               <ChevronLeft /> Previous
             </Link>
           ) : (
-            <span>
+            <span className="inline-flex items-center gap-1">
               <ChevronLeft /> Previous
             </span>
           )}
@@ -69,7 +69,7 @@ export function UrlPagination({
               Next <ChevronRight />
             </Link>
           ) : (
-            <span>
+            <span className="inline-flex items-center gap-1">
               Next <ChevronRight />
             </span>
           )}

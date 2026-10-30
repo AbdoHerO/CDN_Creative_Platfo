@@ -20,7 +20,7 @@ import { CATEGORY_LABELS, CATEGORY_ORDER, STATUS_LABELS, VERSION_TYPE_LABELS } f
 import { resolveAssociations, type Association, type FileSuggestion } from "@/lib/files/matching";
 import { ACCEPT_ATTRIBUTE } from "@/lib/files/types";
 import { formatBytes } from "@/lib/format";
-import { cancelUpload, isAbort, uploadFile, type UploadSessionInfo } from "@/lib/upload/engine";
+import { cancelUpload, isAbort, UploadError, uploadFile, type UploadSessionInfo } from "@/lib/upload/engine";
 import { cn } from "@/lib/utils";
 import { CreativeLookupDialog, type LookupCreative } from "./creative-lookup-dialog";
 import { InterruptedUploads } from "./interrupted-uploads";
@@ -68,6 +68,7 @@ type Item = {
   uploaded: number;
   speed: number;
   error: string | null;
+  retryable: boolean;
   session?: UploadSessionInfo;
   creativeId?: string;
 };
@@ -217,6 +218,7 @@ export function UploadWorkspace({
         uploaded: 0,
         speed: 0,
         error: null,
+        retryable: true,
       })),
     ]);
   };
@@ -278,7 +280,11 @@ export function UploadWorkspace({
       if (isAbort(err)) {
         patch(item.clientId, { state: "cancelled" });
       } else {
-        patch(item.clientId, { state: "error", error: err instanceof Error ? err.message : "Upload failed." });
+        patch(item.clientId, {
+          state: "error",
+          error: err instanceof Error ? err.message : "Upload failed.",
+          retryable: !(err instanceof UploadError) || err.retryable,
+        });
       }
     } finally {
       controllers.current.delete(item.clientId);
@@ -634,10 +640,12 @@ function FileRow({
           )}
           {item.state === "error" && (
             <>
-              <Button variant="outline" size="sm" onClick={onRetry}>
-                <RotateCcw /> Retry
-              </Button>
-              <Button variant="ghost" size="icon-sm" onClick={onCancel} aria-label="Discard">
+              {item.retryable && (
+                <Button variant="outline" size="sm" onClick={onRetry}>
+                  <RotateCcw /> Retry
+                </Button>
+              )}
+              <Button variant="ghost" size="icon-sm" onClick={item.retryable ? onCancel : onRemove} aria-label="Discard">
                 <X />
               </Button>
             </>
@@ -763,7 +771,7 @@ function FileRow({
               {item.state === "uploading" && `${pct}% · ${formatBytes(item.uploaded)} of ${formatBytes(file.size)}`}
               {item.state === "finalizing" && "Verifying and registering…"}
               {item.state === "done" && "Uploaded"}
-              {item.state === "error" && "Failed — you can retry; completed parts are kept."}
+              {item.state === "error" && (item.retryable ? "Failed — you can retry; completed parts are kept." : "Rejected")}
             </span>
             {item.state === "uploading" && item.speed > 0 && <span>{formatBytes(item.speed)}/s</span>}
           </div>

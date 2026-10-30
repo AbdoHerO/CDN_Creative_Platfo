@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import sharp from "sharp";
+import sharp, { type Metadata as SharpMetadata } from "sharp";
 import type { MediaType } from "@/generated/prisma/enums";
 import { getEnv } from "@/lib/env";
 import { fileTypeForName } from "@/lib/files/types";
@@ -143,7 +143,7 @@ async function extractImage(path: string, extension: string, tmp: string): Promi
   const warnings: string[] = [];
   const def = fileTypeForName(`x.${extension}`);
   let source: string = path;
-  let meta: sharp.Metadata | null = null;
+  let meta: SharpMetadata | null = null;
   try {
     meta = await sharp(path, SHARP_INPUT).metadata();
   } catch {
