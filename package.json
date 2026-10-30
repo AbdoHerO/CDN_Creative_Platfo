@@ -16,6 +16,7 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "db:seed": "prisma db seed",
+    "db:bootstrap": "tsx prisma/bootstrap.ts",
     "db:studio": "prisma studio",
     "storage:setup": "tsx scripts/storage-setup.ts",
     "demo:media": "tsx scripts/demo-media.ts",

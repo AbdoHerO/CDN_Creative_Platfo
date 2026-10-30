@@ -1,7 +1,9 @@
 /**
  * Idempotent seed.
  *
- * Always: roles, the four initial applications, the default badges, the first admin account.
+ * Always: roles, the four initial applications, the default badges, the first admin
+ * account (when no admin exists). Production starts run the lighter
+ * `prisma/bootstrap.ts`, which only fills an empty database.
  * Optional (SEED_DEMO_USERS=true, development only): one user per role and a
  * few campaigns/tags so every screen can be exercised. No creatives or files are
  * seeded — those must go through the real upload pipeline (see
@@ -9,31 +11,15 @@
  */
 import "../src/lib/load-env";
 import { prisma } from "../src/lib/db";
-import { generateTemporaryPassword, hashPassword } from "../src/lib/auth/password";
-import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "../src/lib/constants";
+import { hashPassword } from "../src/lib/auth/password";
 import { badgeSlug, DEFAULT_BADGES } from "../src/lib/badges";
 import type { RoleKey } from "../src/generated/prisma/enums";
-
-const APPLICATIONS = [
-  { name: "Win+Pharma", slug: "win-pharma", brandColor: "#16A34A", description: "Pharmacy management and ordering platform." },
-  { name: "iCoral", slug: "icoral", brandColor: "#F26B5B", description: "iCoral mobile application and brand assets." },
-  { name: "Pharmalien", slug: "pharmalien", brandColor: "#2563EB", description: "Pharmalien network communication and marketing." },
-  { name: "WinMed", slug: "winmed", brandColor: "#0D9488", description: "WinMed medical solutions and campaigns." },
-];
-
-const ROLES: RoleKey[] = ["ADMIN", "MANAGER", "CREATOR", "VIEWER"];
+import { ensureAdmin, ensureRoles, INITIAL_APPLICATIONS } from "../src/server/services/bootstrap";
 
 async function main() {
-  for (const key of ROLES) {
-    await prisma.role.upsert({
-      where: { key },
-      create: { key, name: ROLE_LABELS[key], description: ROLE_DESCRIPTIONS[key] },
-      update: { name: ROLE_LABELS[key], description: ROLE_DESCRIPTIONS[key] },
-    });
-  }
-  const roles = Object.fromEntries((await prisma.role.findMany()).map((r) => [r.key, r.id])) as Record<RoleKey, string>;
+  const roles = await ensureRoles(prisma);
 
-  for (const [index, app] of APPLICATIONS.entries()) {
+  for (const [index, app] of INITIAL_APPLICATIONS.entries()) {
     await prisma.application.upsert({
       where: { slug: app.slug },
       create: { ...app, sortOrder: index },
@@ -50,28 +36,16 @@ async function main() {
     });
   }
 
-  const adminEmail = (process.env.SEED_ADMIN_EMAIL || "admin@example.com").toLowerCase();
-  const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } });
-  if (!existingAdmin) {
-    const provided = process.env.SEED_ADMIN_PASSWORD ?? "";
-    // A password shorter than 10 characters is replaced by a temporary one (printed below).
-    const useProvided = provided.length >= 10;
-    if (provided && !useProvided) console.warn("! SEED_ADMIN_PASSWORD is shorter than 10 characters; generating a temporary password instead.");
-    const password = useProvided ? provided : generateTemporaryPassword();
-    await prisma.user.create({
-      data: {
-        email: adminEmail,
-        name: process.env.SEED_ADMIN_NAME || "Platform Admin",
-        jobTitle: "Administrator",
-        passwordHash: await hashPassword(password),
-        roleId: roles.ADMIN,
-        mustChangePassword: !useProvided,
-      },
-    });
-    console.log(`✔ Admin account created: ${adminEmail}`);
-    if (!useProvided) console.log(`  Temporary password (change on first login): ${password}`);
+  const admin = await ensureAdmin(
+    prisma,
+    { email: process.env.SEED_ADMIN_EMAIL, password: process.env.SEED_ADMIN_PASSWORD, name: process.env.SEED_ADMIN_NAME },
+    roles,
+  );
+  if (admin.created) {
+    console.log(`✔ Admin account created: ${admin.email}`);
+    if (admin.temporaryPassword) console.log(`  Temporary password (change on first login): ${admin.temporaryPassword}`);
   } else {
-    console.log(`• Admin account already exists: ${adminEmail}`);
+    console.log(admin.reason === "admin-exists" ? "• An admin account already exists" : `! ${admin.email} is used by another account: no admin created`);
   }
 
   if (process.env.SEED_DEMO_USERS === "true") {

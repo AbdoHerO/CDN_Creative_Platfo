@@ -38,4 +38,6 @@ COPY --from=builder /app/src ./src
 
 RUN mkdir -p /app/public/uploads/templates
 EXPOSE 3000
-CMD ["sh", "-c", "npx prisma migrate deploy && npm run start"]
+# Migrations, then the first-run bootstrap (roles, first admin, initial platforms
+# and badges when missing; existing data is never changed), then the web app.
+CMD ["sh", "-c", "npx prisma migrate deploy && npx tsx prisma/bootstrap.ts && npm run start"]
