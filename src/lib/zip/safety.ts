@@ -27,7 +27,6 @@ export function normalizeEntryPath(raw: string): PathCheck {
   const path = segments.join("/");
   if (path.length > MAX_PATH_LENGTH) return { ok: false, reason: "Path is too long." };
   // Control characters are never legitimate in creative file names.
-  // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1f\x7f]/.test(path)) return { ok: false, reason: "File name contains control characters." };
   return { ok: true, path, segments };
 }

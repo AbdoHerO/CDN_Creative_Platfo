@@ -205,8 +205,10 @@ export type BatchSessionInfo = {
   singleUrl: string | null;
 };
 
-export async function createUploadBatch(user: SessionUser, input: z.infer<typeof batchSchema>) {
+export async function createUploadBatch(user: SessionUser, raw: z.input<typeof batchSchema>) {
   if (!can(user.role, "creative.upload")) throw new ForbiddenError();
+  // Validated here as well so non-HTTP callers get the same guarantees.
+  const input = batchSchema.parse(raw);
   await assertUploadableApplication(user, input.applicationId);
   if (input.campaignId) {
     const campaign = await prisma.campaign.findUnique({ where: { id: input.campaignId }, select: { applicationId: true } });
@@ -330,8 +332,16 @@ export async function createUploadBatch(user: SessionUser, input: z.infer<typeof
       });
       throw err;
     }
-    const { storageKey: _k, uploadIdNeeded: _u, ...info } = plan;
-    out.push(info);
+    out.push({
+      clientId: plan.clientId,
+      sessionId: plan.sessionId,
+      creativeId: plan.creativeId,
+      mode: plan.mode,
+      partSize: plan.partSize,
+      partCount: plan.partCount,
+      mimeType: plan.mimeType,
+      singleUrl: plan.singleUrl,
+    });
   }
 
   // Batch creation itself is not audited; each file is logged when its upload completes.

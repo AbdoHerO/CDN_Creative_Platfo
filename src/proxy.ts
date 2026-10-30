@@ -29,7 +29,8 @@ function buildCsp(nonce: string) {
   const storageSources = storage ? `${storage} ${storage.replace("://", "://*.")}` : "";
   return [
     `default-src 'self'`,
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
+    // 'wasm-unsafe-eval' allows WebAssembly (in-browser SHA-256 of uploads) without allowing JS eval().
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval'${isDev ? " 'unsafe-eval'" : ""}`,
     `style-src 'self' 'unsafe-inline'`,
     `img-src 'self' data: blob: ${storageSources}`,
     `media-src 'self' blob: ${storageSources}`,

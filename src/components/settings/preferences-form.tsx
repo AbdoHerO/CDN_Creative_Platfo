@@ -3,7 +3,7 @@
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { useSyncExternalStore, useTransition } from "react";
 import { toast } from "sonner";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -13,9 +13,13 @@ import { updatePreferencesAction } from "@/server/actions/preferences";
 export function PreferencesForm({ showPreviewVersions, libraryView }: { showPreviewVersions: boolean; libraryView: "GRID" | "LIST" }) {
   const router = useRouter();
   const { theme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
+  // The theme is only known on the client; avoid a hydration mismatch.
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
   const [, startTransition] = useTransition();
-  useEffect(() => setMounted(true), []);
 
   const save = (data: { showPreviewVersions?: boolean; libraryView?: "GRID" | "LIST" }) =>
     startTransition(async () => {

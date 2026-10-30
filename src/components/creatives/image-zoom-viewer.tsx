@@ -17,6 +17,7 @@ export function ImageZoomViewer({ src, alt, naturalWidth }: { src: string; alt: 
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
   const fit = useCallback(() => {
@@ -64,18 +65,22 @@ export function ImageZoomViewer({ src, alt, naturalWidth }: { src: string; alt: 
       <div
         ref={container}
         className="checkerboard relative flex h-[min(70vh,720px)] select-none items-center justify-center overflow-hidden rounded-xl border"
-        style={{ cursor: scale > 1 ? (drag.current ? "grabbing" : "grab") : "zoom-in" }}
+        style={{ cursor: scale > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in" }}
         onDoubleClick={(e) => (scale > 1 ? fit() : zoomAt(2.5, e.clientX, e.clientY))}
         onPointerDown={(e) => {
           if (scale <= 1) return;
           (e.target as HTMLElement).setPointerCapture(e.pointerId);
           drag.current = { x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y };
+          setDragging(true);
         }}
         onPointerMove={(e) => {
           if (!drag.current) return;
           setOffset({ x: drag.current.ox + e.clientX - drag.current.x, y: drag.current.oy + e.clientY - drag.current.y });
         }}
-        onPointerUp={() => (drag.current = null)}
+        onPointerUp={() => {
+          drag.current = null;
+          setDragging(false);
+        }}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -87,7 +92,7 @@ export function ImageZoomViewer({ src, alt, naturalWidth }: { src: string; alt: 
           className="max-h-full max-w-full object-contain transition-opacity"
           style={{
             transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
-            transition: drag.current ? "none" : "transform 120ms ease-out",
+            transition: dragging ? "none" : "transform 120ms ease-out",
             opacity: loaded ? 1 : 0,
             imageRendering: scale > 3 ? "pixelated" : "auto",
           }}

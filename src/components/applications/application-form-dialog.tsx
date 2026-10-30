@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Pencil, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -33,7 +33,7 @@ export function ApplicationFormDialog({ application }: { application?: { id: str
   };
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: defaults });
   const errors = form.formState.errors;
-  const color = form.watch("brandColor");
+  const color = useWatch({ control: form.control, name: "brandColor" });
 
   const onSubmit = form.handleSubmit((values) =>
     startTransition(async () => {

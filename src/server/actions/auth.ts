@@ -9,7 +9,7 @@ import { hashPassword, passwordSchema, verifyPassword } from "@/lib/auth/passwor
 import { createSession, invalidateSession, invalidateUserSessions, SESSION_COOKIE } from "@/lib/auth/session-core";
 import { prisma } from "@/lib/db";
 import { AppError, AuthError } from "@/lib/errors";
-import { enforceRateLimit, resetRateLimit } from "@/lib/rate-limit";
+import { enforceRateLimit, isRateLimited, rateLimit, RateLimitError, resetRateLimit } from "@/lib/rate-limit";
 import { parseInput, runAction } from "@/server/action-utils";
 
 const loginSchema = z.object({
@@ -32,12 +32,22 @@ export async function loginAction(input: z.input<typeof loginSchema>) {
   const result = await runAction(async () => {
     const data = parseInput(loginSchema, input);
     const meta = await getRequestMeta();
-    await enforceRateLimit(`login:ip:${meta.ipAddress ?? "unknown"}`, 30, 15 * 60, "Too many sign-in attempts. Try again in a few minutes.");
-    await enforceRateLimit(`login:email:${data.email}`, 8, 15 * 60, "Too many sign-in attempts for this account. Try again in 15 minutes.");
+    // Only failed attempts count. The IP bucket is used only when the client IP
+    // is trustworthy (TRUST_PROXY); otherwise all users would share one bucket.
+    const ipKey = meta.ipAddress ? `login:ip:${meta.ipAddress}` : null;
+    const emailKey = `login:email:${data.email}`;
+    if (ipKey && (await isRateLimited(ipKey, 30, 15 * 60))) {
+      throw new RateLimitError("Too many failed sign-in attempts from your network. Try again in a few minutes.");
+    }
+    if (await isRateLimited(emailKey, 8, 15 * 60)) {
+      throw new RateLimitError("Too many failed sign-in attempts for this account. Try again in 15 minutes.");
+    }
 
     const user = await prisma.user.findUnique({ where: { email: data.email } });
     const valid = await verifyPassword(user?.passwordHash ?? (await getDummyHash()), data.password);
     if (!user || !valid) {
+      await rateLimit(emailKey, 8, 15 * 60);
+      if (ipKey) await rateLimit(ipKey, 30, 15 * 60);
       await logActivity({
         actorId: user?.id ?? null,
         action: "AUTH_LOGIN_FAILED",
@@ -55,7 +65,7 @@ export async function loginAction(input: z.input<typeof loginSchema>) {
     const session = await createSession(user.id, meta);
     (await cookies()).set(SESSION_COOKIE, session.token, sessionCookieOptions(session.expiresAt));
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-    await resetRateLimit(`login:email:${data.email}`);
+    await resetRateLimit(emailKey);
     await logActivity({ actorId: user.id, action: "AUTH_LOGIN", entityType: "USER", entityId: user.id, summary: `${user.name} signed in`, meta });
     return user.mustChangePassword ? "/change-password" : safeRedirect(data.next);
   });

@@ -24,7 +24,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUser } from "@/lib/auth/current-user";
-import { STATUS_ORDER } from "@/lib/constants";
+import { STATUS_LABELS, STATUS_ORDER } from "@/lib/constants";
 import { isStorageConfigured } from "@/lib/env";
 import { formatBytes, formatNumber, timeAgo } from "@/lib/format";
 import { can } from "@/lib/permissions";
@@ -143,6 +143,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
               label="Creatives by application"
               rows={data.perApplication.map((a) => ({
                 key: a.id,
+                text: a.name,
                 label: <AppBadge name={a.name} color={a.brandColor} size="md" className="text-foreground" />,
                 value: a.count,
                 href: `/applications/${a.id}`,
@@ -161,6 +162,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
               label="Creatives by status"
               rows={STATUS_ORDER.filter((s) => user.role !== "VIEWER" || s === "APPROVED").map((s) => ({
                 key: s,
+                text: STATUS_LABELS[s],
                 label: <StatusBadge status={s} />,
                 value: t[s],
                 href: s === "PENDING" || s === "IN_REVIEW" ? "/validation" : s === "DRAFT" ? "/library?status=DRAFT" : `/${s.toLowerCase()}`,

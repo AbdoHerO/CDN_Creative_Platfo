@@ -2,7 +2,7 @@
 
 import { LayoutGrid, List, Search, SlidersHorizontal, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useOptimistic, useRef, useState, useTransition } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,6 +57,9 @@ export function LibraryFilters({
   const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
   const [query, setQuery] = useState(values.q);
+  // Optimistic so rapid clicks never send a stale value while the page refreshes.
+  const [previewsOn, setPreviewsOn] = useOptimistic(showPreviews);
+  const [savingPreviews, startPreviewTransition] = useTransition();
   const lastPushed = useRef(values.q);
 
   const update = (patch: Partial<Record<keyof Values | "view", string | null>>) => {
@@ -101,7 +104,8 @@ export function LibraryFilters({
   const moreCount = [values.tag, values.uploader, values.format, values.from, values.to].filter(Boolean).length;
 
   const togglePreviews = (checked: boolean) => {
-    startTransition(async () => {
+    startPreviewTransition(async () => {
+      setPreviewsOn(checked);
       await updatePreferencesAction({ showPreviewVersions: checked });
       router.refresh();
     });
@@ -237,7 +241,7 @@ export function LibraryFilters({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-h-7 flex-wrap items-center gap-1.5">
           <span className="tabular mr-1 text-sm text-muted-foreground">
-            {pending ? <Spinner className="inline size-3.5" /> : null} {formatNumber(total)} result{total === 1 ? "" : "s"}
+            {pending || savingPreviews ? <Spinner className="inline size-3.5" /> : null} {formatNumber(total)} result{total === 1 ? "" : "s"}
           </span>
           {chips.map((chip) => (
             <button
@@ -266,7 +270,7 @@ export function LibraryFilters({
         </div>
         <div className="flex items-center gap-3">
           <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-            <Switch checked={showPreviews} onCheckedChange={togglePreviews} aria-label="Show preview versions" />
+            <Switch checked={previewsOn} onCheckedChange={togglePreviews} disabled={savingPreviews} aria-label="Show preview versions" />
             Show preview versions
           </label>
           <Select value={values.sort} onValueChange={(v) => update({ sort: v === "newest" ? null : v })}>

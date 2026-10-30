@@ -12,7 +12,7 @@ export function HorizontalBars({
   emptyText = "No data yet.",
   formatValue = formatNumber,
 }: {
-  rows: { key: string; label: React.ReactNode; value: number; href?: string }[];
+  rows: { key: string; label: React.ReactNode; /** Plain-text name for assistive technology. */ text: string; value: number; href?: string }[];
   label: string;
   emptyText?: string;
   formatValue?: (value: number) => string;
@@ -61,7 +61,7 @@ export function HorizontalBars({
         })}
       </ul>
       <figcaption className="sr-only">
-        {label}: {rows.map((r) => `${typeof r.label === "string" ? r.label : r.key} ${r.value}`).join(", ")}
+        {label}: {rows.map((r) => `${r.text} ${formatValue(r.value)}`).join(", ")}
       </figcaption>
     </figure>
   );

@@ -7,11 +7,11 @@ import { PreferencesForm } from "@/components/settings/preferences-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireUser } from "@/lib/auth/current-user";
-import { prisma } from "@/lib/db";
 import { getEnv, getStorageConfig } from "@/lib/env";
 import { formatNumber, timeAgo } from "@/lib/format";
 import { can } from "@/lib/permissions";
 import { getSettings } from "@/lib/settings";
+import { getWorkerHealth } from "@/server/queries/system";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -20,16 +20,8 @@ export default async function SettingsPage() {
   const isAdmin = can(user.role, "settings.manage");
   const env = getEnv();
   const storage = getStorageConfig();
-  const [settings, queued, failed24h, lastDone, oldestQueued] = isAdmin
-    ? await Promise.all([
-        getSettings(),
-        prisma.job.count({ where: { status: { in: ["QUEUED", "RUNNING"] } } }),
-        prisma.job.count({ where: { status: "FAILED", updatedAt: { gt: new Date(Date.now() - 86_400_000) } } }),
-        prisma.job.findFirst({ where: { status: "COMPLETED" }, orderBy: { completedAt: "desc" }, select: { completedAt: true } }),
-        prisma.job.findFirst({ where: { status: "QUEUED", runAt: { lte: new Date() } }, orderBy: { runAt: "asc" }, select: { runAt: true } }),
-      ])
-    : [null, 0, 0, null, null];
-  const workerStalled = !!oldestQueued && Date.now() - oldestQueued.runAt.getTime() > 5 * 60_000;
+  const [settings, health] = isAdmin ? await Promise.all([getSettings(), getWorkerHealth()]) : [null, null];
+  const { queued, failed24h, lastCompletedAt, stalled: workerStalled } = health ?? { queued: 0, failed24h: 0, lastCompletedAt: null, stalled: false };
 
   return (
     <>
@@ -68,7 +60,7 @@ export default async function SettingsPage() {
                   <Status
                     ok={!workerStalled && failed24h === 0}
                     label="Background worker"
-                    detail={`${formatNumber(queued)} queued/running · ${formatNumber(failed24h)} failed in 24 h · last job ${lastDone?.completedAt ? timeAgo(lastDone.completedAt) : "never"}${workerStalled ? " · queue is not being processed — is `npm run worker` running?" : ""}`}
+                    detail={`${formatNumber(queued)} queued/running · ${formatNumber(failed24h)} failed in 24 h · last job ${lastCompletedAt ? timeAgo(lastCompletedAt) : "never"}${workerStalled ? " · queue is not being processed — is `npm run worker` running?" : ""}`}
                   />
                   <Status ok label="Upload limits" detail={`Multipart above ${env.UPLOAD_MULTIPART_THRESHOLD_MB} MB in ${env.UPLOAD_PART_SIZE_MB} MB parts · hard limit ${formatNumber(env.UPLOAD_MAX_FILE_SIZE_MB)} MB`} />
                   <Status ok label="ZIP import limits" detail={`${formatNumber(env.ZIP_MAX_ENTRIES)} entries · ${formatNumber(env.ZIP_MAX_UNCOMPRESSED_MB)} MB expanded · ratio ≤ ${env.ZIP_MAX_COMPRESSION_RATIO}:1`} />

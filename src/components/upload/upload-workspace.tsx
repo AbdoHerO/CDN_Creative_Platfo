@@ -238,6 +238,53 @@ export function UploadWorkspace({
   const canStart = !disabled && !planning && staged.length > 0 && problems.length === 0 && !!applicationId && !starting;
 
   // ── Upload runner ──
+  // runOne re-pumps the queue when a file finishes; a ref breaks the cycle
+  // between the two callbacks.
+  const pumpRef = useRef<() => void>(() => {});
+
+  const runOne = useCallback(
+    async (item: Item, ctrl: AbortController) => {
+      let lastEmit = 0;
+      let lastBytes = 0;
+      let lastTime = performance.now();
+      let speed = 0;
+      try {
+        const result = await uploadFile(item.file, item.session!, {
+          signal: ctrl.signal,
+          onProgress: (p) => {
+            const now = performance.now();
+            if (now - lastTime > 500) {
+              const instant = ((p.uploadedBytes - lastBytes) / (now - lastTime)) * 1000;
+              speed = speed ? speed * 0.7 + instant * 0.3 : instant;
+              lastBytes = p.uploadedBytes;
+              lastTime = now;
+            }
+            if (now - lastEmit > 200 || p.phase === "finalizing") {
+              lastEmit = now;
+              patch(item.clientId, { uploaded: p.uploadedBytes, speed, state: p.phase === "finalizing" ? "finalizing" : "uploading" });
+            }
+          },
+        });
+        patch(item.clientId, { state: "done", uploaded: item.file.size, creativeId: result.kind === "file" ? result.creativeId : undefined });
+      } catch (err) {
+        if (isAbort(err)) {
+          patch(item.clientId, { state: "cancelled" });
+        } else {
+          patch(item.clientId, {
+            state: "error",
+            error: err instanceof Error ? err.message : "Upload failed.",
+            retryable: !(err instanceof UploadError) || err.retryable,
+          });
+        }
+      } finally {
+        controllers.current.delete(item.clientId);
+        active.current--;
+        pumpRef.current();
+      }
+    },
+    [patch],
+  );
+
   const pump = useCallback(() => {
     while (active.current < FILE_CONCURRENCY) {
       const next = itemsRef.current.find((i) => i.state === "queued" && i.session && !controllers.current.has(i.clientId));
@@ -250,48 +297,11 @@ export function UploadWorkspace({
       patch(next.clientId, { state: "uploading", error: null });
       void runOne(next, ctrl);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patch]);
+  }, [patch, runOne]);
 
-  const runOne = async (item: Item, ctrl: AbortController) => {
-    let lastEmit = 0;
-    let lastBytes = 0;
-    let lastTime = performance.now();
-    let speed = 0;
-    try {
-      const result = await uploadFile(item.file, item.session!, {
-        signal: ctrl.signal,
-        onProgress: (p) => {
-          const now = performance.now();
-          if (now - lastTime > 500) {
-            const instant = ((p.uploadedBytes - lastBytes) / (now - lastTime)) * 1000;
-            speed = speed ? speed * 0.7 + instant * 0.3 : instant;
-            lastBytes = p.uploadedBytes;
-            lastTime = now;
-          }
-          if (now - lastEmit > 200 || p.phase === "finalizing") {
-            lastEmit = now;
-            patch(item.clientId, { uploaded: p.uploadedBytes, speed, state: p.phase === "finalizing" ? "finalizing" : "uploading" });
-          }
-        },
-      });
-      patch(item.clientId, { state: "done", uploaded: item.file.size, creativeId: result.kind === "file" ? result.creativeId : undefined });
-    } catch (err) {
-      if (isAbort(err)) {
-        patch(item.clientId, { state: "cancelled" });
-      } else {
-        patch(item.clientId, {
-          state: "error",
-          error: err instanceof Error ? err.message : "Upload failed.",
-          retryable: !(err instanceof UploadError) || err.retryable,
-        });
-      }
-    } finally {
-      controllers.current.delete(item.clientId);
-      active.current--;
-      pump();
-    }
-  };
+  useEffect(() => {
+    pumpRef.current = pump;
+  }, [pump]);
 
   useEffect(() => {
     pump();

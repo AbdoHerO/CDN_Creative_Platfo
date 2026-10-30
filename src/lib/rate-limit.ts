@@ -20,6 +20,14 @@ export async function rateLimit(key: string, limit: number, windowSeconds: numbe
   return { ok: count <= limit, count, remaining: Math.max(0, limit - count), resetAt };
 }
 
+/** Read-only check: has `key` reached `limit` within the current window? */
+export async function isRateLimited(key: string, limit: number, windowSeconds: number): Promise<boolean> {
+  const row = await prisma.rateLimit.findUnique({ where: { key } });
+  if (!row) return false;
+  if (row.windowStart.getTime() < Date.now() - windowSeconds * 1000) return false;
+  return row.count >= limit;
+}
+
 export async function resetRateLimit(key: string) {
   await prisma.rateLimit.delete({ where: { key } }).catch(() => undefined);
 }

@@ -55,10 +55,6 @@ export function NotificationsMenu({ initialUnread }: { initialUnread: number }) 
     };
   }, [refresh]);
 
-  useEffect(() => {
-    if (open) void refresh();
-  }, [open, refresh]);
-
   const markAll = async () => {
     const res = await markNotificationsReadAction("all");
     if (res.ok) {
@@ -78,7 +74,13 @@ export function NotificationsMenu({ initialUnread }: { initialUnread: number }) 
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (v) void refresh();
+      }}
+    >
       <PopoverTrigger asChild>
         <Button variant="ghost" size="icon" className="relative" aria-label={`Notifications${unread ? ` (${unread} unread)` : ""}`}>
           <Bell className="size-4" />

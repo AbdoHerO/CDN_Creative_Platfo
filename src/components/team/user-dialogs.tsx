@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Copy, KeyRound, MoreHorizontal, Pencil, UserCheck, UserPlus, UserX } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
@@ -93,7 +93,7 @@ export function UserFormDialog({ user, applications }: { user?: TeamUser; applic
   };
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: defaults });
   const errors = form.formState.errors;
-  const restrict = form.watch("restrictApplications");
+  const restrict = useWatch({ control: form.control, name: "restrictApplications" });
 
   const onSubmit = form.handleSubmit((values) =>
     startTransition(async () => {

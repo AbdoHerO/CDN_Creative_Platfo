@@ -113,7 +113,7 @@ export default async function StoragePage() {
               label="Storage by application"
               formatValue={formatBytes}
               rows={apps
-                .map((a) => ({ key: a.id, label: <AppBadge name={a.name} color={a.brandColor} size="md" className="text-foreground" />, value: byApp.get(a.id) ?? 0, href: `/applications/${a.id}` }))
+                .map((a) => ({ key: a.id, text: a.name, label: <AppBadge name={a.name} color={a.brandColor} size="md" className="text-foreground" />, value: byApp.get(a.id) ?? 0, href: `/applications/${a.id}` }))
                 .sort((a, b) => b.value - a.value)}
             />
           </CardContent>
@@ -127,7 +127,7 @@ export default async function StoragePage() {
               label="Storage by category"
               formatValue={formatBytes}
               emptyText="No files stored yet."
-              rows={byCategory.map((c) => ({ key: c.category, label: CATEGORY_LABELS[c.category], value: Number(c.bytes ?? 0), href: `/library?category=${c.category}` }))}
+              rows={byCategory.map((c) => ({ key: c.category, text: CATEGORY_LABELS[c.category], label: CATEGORY_LABELS[c.category], value: Number(c.bytes ?? 0), href: `/library?category=${c.category}` }))}
             />
           </CardContent>
         </Card>
