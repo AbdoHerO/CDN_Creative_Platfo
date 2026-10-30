@@ -864,7 +864,7 @@ ENV_FILE=.env.prod docker compose build creative-hub-prod
 ENV_FILE=.env.prod docker compose up -d --force-recreate --remove-orphans
 ```
 
-The `Jenkinsfile` does the same with the env file stored as the Jenkins credential `creativehub_pro_env`, and runs `npx prisma migrate deploy` once before starting the containers. The worker's temporary folder (`WORKER_TMP_DIR`, default `/tmp`) must have room for the largest file or ZIP being processed.
+The `Jenkinsfile` does the same with the env file stored as the Jenkins credential `creativehub_pro_env`, and runs `npx prisma migrate deploy` once before starting the containers. Tick **RUN_SEED** (*Build with Parameters*) to also run `npx prisma db seed`: needed once on a new database to create the first admin (`SEED_ADMIN_*`), the platforms, roles and default badges; re-running it keeps existing records. The worker's temporary folder (`WORKER_TMP_DIR`, default `/tmp`) must have room for the largest file or ZIP being processed.
 
 Put the web container and RustFS behind HTTPS (Caddy, Nginx or Traefik) and set `TRUST_PROXY=true`.
 
